@@ -79,9 +79,13 @@ git push
 steps automatically, but only when a `WIKI_TOKEN` repository secret is
 present (`GITHUB_TOKEN` cannot push to the wiki repo — wikis are a
 separate git remote GitHub does not extend the default token's
-permissions to). The step is gated with
-`if: ${{ secrets.WIKI_TOKEN != '' }}` so CI stays green with the secret
-absent; it simply skips wiki publishing until one is added.
+permissions to). The job's steps are individually gated with
+`if: env.WIKI_TOKEN != ''` so CI stays green with the secret absent; it
+simply skips wiki publishing until one is added. Note the gate has to be
+on the *steps*, not the job — the `secrets` context is not available in a
+job-level `if` (only `github`/`needs`/`vars`/`inputs` are), so
+`if: ${{ secrets.WIKI_TOKEN != '' }}` on the job would fail the whole
+workflow file with "Unrecognized named-value: 'secrets'".
 
 ### One-time PAT setup (do this to enable the CI wiki-publish step)
 
