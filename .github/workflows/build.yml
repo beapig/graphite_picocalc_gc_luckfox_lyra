@@ -97,7 +97,7 @@ jobs:
         with:
           python-version: '3.11'
       - name: Validate markdown
-        run: python3 scripts/validate_md.py docs/ AGENTS.md README.md
+        run: python3 scripts/validate_md.py docs-site/ docs/ AGENTS.md README.md
 
   release:
     name: Publish release artifacts
