@@ -5,9 +5,11 @@ name: Pages
 # dependencies and no external requests, so there is nothing here to break
 # independently of the page itself.
 #
-# One-time manual setup: repo Settings -> Pages -> Source = "GitHub Actions".
-# A workflow file cannot set that for itself. Pages also requires the repo to
-# be public (or a paid plan).
+# Setup was done by hand on 2026-08-10: Settings -> Pages -> Source =
+# "GitHub Actions". A workflow file cannot set that for itself. The site is
+# configured public, so it serves at
+# https://moodoki.github.io/graphite_picocalc_gc/ regardless of whether the
+# repo itself is private — which is why this job carries no visibility guard.
 
 on:
   push:
@@ -31,10 +33,6 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Skip while the repo is private — Pages would fail the run rather than
-    # skip it, and a red check that nobody can fix is worse than no check.
-    # This starts passing by itself the moment visibility flips.
-    if: github.event.repository.private == false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
