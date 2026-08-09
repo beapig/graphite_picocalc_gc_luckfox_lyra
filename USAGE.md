@@ -49,12 +49,20 @@ the home screen:
 | `stats`, `stat` | Statistics |
 | `dist` | Distribution helper |
 | `test`, `infer` | Inference (tests, intervals, ANOVA) |
-| `plot` | Stat plot setup |
-| `calc` | Graph analysis menu |
+| `plot`, `plots` | Stat plot setup |
+| `calc`, `analyze` | Graph analysis menu |
+| `mat`, `matrix` | Matrix editor |
+| `cas` | CAS menu (also `F6`) |
+| `solve`, `solver` | Numeric equation solver |
+| `const`, `constants` | Scientific constants |
+| `settings`, `setup` | Power and brightness settings |
 | `diag` | Hardware diagnostics |
 | `files` | SD file list |
 | `cls` | Clear the screen, keeping input history |
 | `clrhist` | Erase all history |
+
+The on-device help lists a subset of these; the table above is the full set the
+home screen accepts.
 
 ## Home
 
@@ -68,8 +76,11 @@ Type an expression, `ENTER` to evaluate.
 | `Alt+ENTER` | Decimal result; on an empty line, redo the last exact result as a decimal |
 | `F6` (`Shift+F1`) | CAS menu |
 
-Store with `2->A`. `e` is Euler's constant; `E` is reserved for exponent
-notation.
+Store with `2->a`. **Input is case-sensitive, and variables are lowercase** —
+`a`–`z` plus `theta`, with `ans` holding the last result. `e` and `i` are
+reserved (Euler's number and the imaginary unit); storing to either is refused
+with a message saying so. In a number literal, `e` or `E` is exponent notation:
+`1e10`.
 
 Results with a clean closed form appear in amber rather than as a decimal —
 `sqrt(8)` as `2√2`, `pi*2` as `2π`, `1/3` as a stacked fraction, `sin(pi/3)` as

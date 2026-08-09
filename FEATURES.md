@@ -12,8 +12,10 @@ Everything below is implemented and hardware-verified on both the Pico 1 H
 - **Natural math display** — stacked fractions, raised exponents, auto-scaling
   parentheses. Expressions render as they would be written, not as a flat line
   of ASCII.
-- **Variables** A–Z, `Ans`, and `theta`, with a TI-style `->` store operator
-  (`2->A`). `e` is Euler's constant; `E` is reserved for exponent notation.
+- **Variables** `a`–`z`, `theta` and `ans`, with a TI-style `->` store operator
+  (`2->a`). Input is case-sensitive and variables are lowercase. `e` and `i`
+  are reserved — Euler's number and the imaginary unit — so 24 letters are
+  free.
 - **Expression history** with shell-style recall (`UP`/`DOWN`) and a separately
   scrollable history view.
 - **Angle modes** (RAD/DEG) and **display formats** (FLOAT/FIX/SCI, plus ENG
