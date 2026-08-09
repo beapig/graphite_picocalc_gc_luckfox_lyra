@@ -1,9 +1,15 @@
 # Using the calculator
 
-A quick tour of the screens and their keys. The firmware also has a **built-in
-help browser** — `F5` from the Home screen — with the function catalog,
-per-screen key reference and syntax notes; that is the authoritative reference
-and it ships with the build you are running.
+A tour of the screens and their keys.
+
+The firmware also carries its own help: type **`help`** (or **`?`**) on the home
+screen for the function catalog, per-screen key reference and syntax notes.
+That is the authoritative reference, it ships with the build you are running,
+and it cannot drift — the catalog it shows is the same table the expression
+parser registers from. The web copies are
+[Function catalog](docs-site/reference/function-catalog.md) and
+[Key reference](docs-site/reference/key-reference.md), generated from the same
+source.
 
 For what the calculator can do, see [FEATURES.md](FEATURES.md). For building
 and flashing, see the [README](README.md#quick-start-building-from-source).
@@ -15,7 +21,40 @@ into their own scan codes rather than passing Shift through to the host — and
 it swallows shifted arrows entirely (`Shift+Enter` arrives as `INS`). So every
 binding in this firmware uses **Alt** or **Ctrl**, never Shift. Function keys
 past `F5` are Shift chords the keyboard reports directly: `F6` = `Shift+F1`,
-`F9` = `Shift+F4`.
+`F7` = `Shift+F2`, `F8` = `Shift+F3`.
+
+## The five softkeys, everywhere
+
+The same five keys mean the same thing on every screen:
+
+| Key | Goes to |
+|-----|---------|
+| `F1` EDIT | The active graph mode's editor (Y= / PAR / POLAR / SEQ) |
+| `F2` WIN | Window settings |
+| `F3` MODE | Mode settings |
+| `F4` TRC | Trace — opens the graph if you are not already there |
+| `F5` GRPH | Graph, and graph ↔ table from there |
+| `HOME` | Back to the home screen |
+| `ESC` | Back, or cancel an edit |
+
+## Typed commands
+
+Several screens have no key of their own and are opened by typing their name on
+the home screen:
+
+| Command | Opens |
+|---------|-------|
+| `help`, `?` | The built-in help browser |
+| `lists`, `list` | Data list editor |
+| `stats`, `stat` | Statistics |
+| `dist` | Distribution helper |
+| `test`, `infer` | Inference (tests, intervals, ANOVA) |
+| `plot` | Stat plot setup |
+| `calc` | Graph analysis menu |
+| `diag` | Hardware diagnostics |
+| `files` | SD file list |
+| `cls` | Clear the screen, keeping input history |
+| `clrhist` | Erase all history |
 
 ## Home
 
@@ -23,36 +62,41 @@ Type an expression, `ENTER` to evaluate.
 
 | Key | Action |
 |-----|--------|
-| `UP` / `DOWN` | Walk back/forward through past inputs (shell-style) |
+| `UP` | Recall the last entry |
+| `UP` / `DOWN` | Walk the input history |
 | `Alt+UP` / `Alt+DOWN` (or `Ctrl+`) | Scroll the history *view* |
-| `Alt+ENTER` | Show the last result as a decimal instead of an exact form; on an empty input line, re-run the last exact result as a decimal |
-| `F1` … `F5` | Y= editor, window, graph, mode, help |
-| `F6` (`Shift+F1`) | Hardware diagnostics (`F6` or `ESC` exits) |
-| `HOME` | Return here from anywhere |
+| `Alt+ENTER` | Decimal result; on an empty line, redo the last exact result as a decimal |
+| `F6` (`Shift+F1`) | CAS menu |
 
-Store with `2->A`. Results with a clean closed form appear in amber
-(`sqrt(8)` → `2√2`); a trailing `>dec` also forces the decimal.
+Store with `2->A`. `e` is Euler's constant; `E` is reserved for exponent
+notation.
 
-Several subsystems are reachable by typing their name: `lists`/`list`,
-`stats`/`stat`, `calc`/`analyze`, `cas`, `matrix`.
+Results with a clean closed form appear in amber rather than as a decimal —
+`sqrt(8)` as `2√2`, `pi*2` as `2π`, `1/3` as a stacked fraction, `sin(pi/3)` as
+`√3/2`. A trailing `>dec` also forces the decimal, and `>frac` asks for a
+fraction (denominators up to 10000).
 
-## Mode (`F4`)
+## Mode (`F3`)
 
-Angle (RAD/DEG), display format (FLOAT/FIX/SCI) and fix digits, **graph mode**
-(FUNC/PARAM/POLAR/SEQ), **number mode** (REAL/`a+bi`/`r∠θ`), brightness, and
-reboot to the USB bootloader for flashing.
+Angle (RADIAN / DEGREE), display format (FLOAT / FIX / SCI / ENG) and fix
+digits, **graph mode** (FUNC / PARAM / POLAR / SEQ), **number mode**
+(REAL / `a+bi` / `r∠θ`), brightness, and reboot to the USB bootloader for
+flashing.
 
-## Y= and the other editors
+`LEFT`/`RIGHT` change a value; `ENTER` selects, and activates the reboot row.
 
-`F5` from the graph opens the active mode's editor.
+## Editors (`F1`)
+
+`F1` opens whichever editor matches the active graph mode.
 
 | Key | Action |
 |-----|--------|
-| `UP` / `DOWN` | Select a slot |
-| `ENTER` / `F1` | Edit |
-| `F2` | Toggle enable |
-| `F3` | Clear |
-| `F4` | Graph |
+| `ENTER` | Edit the selected field |
+| `SPACE` | Toggle the slot on or off |
+| `DEL` | Clear the field |
+| `F5` | Graph |
+
+A field that will not parse is drawn in red.
 
 The parametric editor shows six $X_{nT}/Y_{nT}$ pairs — committing an X
 expression auto-focuses its empty partner. The polar editor shows
@@ -60,66 +104,110 @@ $r_1 \ldots r_6$ with `theta` typed out.
 
 ## Window (`F2`)
 
-Mode-aware: adds `Tmin/Tmax/Tstep` in parametric mode and `THmin/THmax/THstep`
-in polar mode, ahead of the shared x/y fields.
+Mode-aware: adds `Tmin`/`Tmax`/`Tstep` in parametric mode and
+`THmin`/`THmax`/`THstep` in polar mode, ahead of the shared x/y fields.
+`ENTER` edits a value; `DEL` clears it and starts an empty edit.
 
-## Graph (`F3`)
-
-| Key | Action |
-|-----|--------|
-| `F1` | Trace — `LEFT`/`RIGHT` move, `UP`/`DOWN` switch curve |
-| `F2` / `F3` | Zoom in / out |
-| `S` / `T` | Standard / trig presets |
-| `F4` | Table |
-| `F5` | Editor |
-| `F6` | CALC menu |
-| `F9` (`Shift+F4`) | Split-screen |
-
-The trace readout shows `x/y`, `t`, or `θ` depending on the mode.
-
-## Table (`F4` from the graph)
-
-Columns adapt to the mode (`x|Y…`, `T|X1T Y1T…`, `th|r…`). Auto mode scrolls
-infinitely in both directions; ask mode accumulates typed values (`ENTER` adds,
-`F5` deletes).
+## Graph (`F5`)
 
 | Key | Action |
 |-----|--------|
+| `F4` TRC | Toggle trace |
+| `LEFT` / `RIGHT` | Move the trace cursor |
+| `UP` / `DOWN` | Next curve, while tracing |
+| `-` / `=` | Zoom out / in |
+| `S` / `T` | ZStandard / ZTrig |
+| `D` / `Q` | ZDecimal / ZSquare |
+| `B` | ZBox — pick two corners |
+| `F` | ZoomFit — fit y to the curves |
+| `Z` | ZoomStat — fit to stat plots |
+| `H` | Shade between two expressions |
+| `L` | Toggle axis labels |
+| `F5` TBL | Value table |
+| `Alt+F5` | Split graph \| table |
+| `F6` CALC | Analysis menu |
+
+The trace readout shows `x`/`y`, `t`, or `θ` depending on the mode.
+
+**CALC** (`F6`) offers value, zero, minimum, maximum, intersect, `dy/dx` and
+numeric integral. `ENTER` places bounds and points, `ESC` cancels. A root is
+written back to `x` and to `ans`.
+
+## Table (`F5` from the graph)
+
+Columns adapt to the mode (`x|Y…`, `T|X1T Y1T…`, `th|r…`).
+
+| Key | Action |
+|-----|--------|
+| `UP` / `DOWN` | Scroll rows |
 | `LEFT` / `RIGHT` | Scroll columns |
-| `F1` | Table setup (Start / Step / AUTO-ASK) |
-| `F4` or `ESC` | Back to the graph |
+| `ENTER` | Add a value (ASK mode) |
+| `DEL` | Delete a row (ASK mode) |
+| `F2` SETP | Table setup — start, step, AUTO/ASK |
+| `Alt+F5` | Split graph \| table |
 
-## Split-screen (`F9` from graph or table)
+AUTO mode scrolls infinitely in both directions; ASK mode accumulates the
+values you type.
 
-Graph pane above, table below. `F4` switches the focused pane; trace and table
-row stay in sync. `F9` or `ESC` exits.
+## Split screen (`Alt+F5`)
 
-## Lists and statistics (`lists` / `stats`)
+Graph pane above, table below.
 
-A spreadsheet-style editor for the six lists $L_1 \ldots L_6$ and any named
-lists, then 1-var/2-var descriptive stats, the ten regression models,
-distributions (PDF/CDF/inverse), the inference suite, and stat plots
-(histogram / box / scatter) drawn by the graph engine.
+| Key | Action |
+|-----|--------|
+| `F5` | Switch the focused pane |
+| `F4` | Trace, in the graph pane |
+| `Alt+F5` or `ESC` | Back to full screen |
+
+Trace position and table row stay in sync.
+
+## List editor (`lists`)
+
+| Key | Action |
+|-----|--------|
+| Arrows | Move between cells |
+| `ENTER` or typing | Edit, or append a new row |
+| `DEL` | Delete a row |
+| `F6` / `F7` (`Shift+F1`/`F2`) | Sort ascending / descending |
+| `F8` (`Shift+F3`) | Clear the list |
+
+Six built-in lists $L_1 \ldots L_6$, plus named lists.
+
+## Statistics (`stats`)
+
+`UP`/`DOWN` select a row, `LEFT`/`RIGHT` change a value, `ENTER` on the last
+row calculates. Scroll results with `UP`/`DOWN`.
+
+## Distributions (`dist`)
+
+`LEFT`/`RIGHT` pick the distribution and the function (PDF / CDF / inverse),
+`ENTER` edits a parameter, `DEL` clears one. `ENTER` on the last row
+calculates; the result goes to `ans` and the equivalent function call is shown,
+so you can type it directly next time.
+
+## Inference (`test`)
+
+`LEFT`/`RIGHT` cycle the test and its options, `ENTER` edits a field or runs
+the test. Where it applies, you choose a **Data** or **Stats** source.
+
+## Stat plots (`plot`)
+
+Three slots: scatter, xy-line, histogram, box, and normal probability. They
+draw on the graph screen alongside your functions; `Z` there is ZoomStat.
 
 ## Matrices
 
-Type `[A]` … `[J]` directly into a home-screen expression, or open the matrix
-editor. Arithmetic, determinant, inverse, transpose, row-echelon form,
-`eigenvals` / `eig`, and a numeric equation solver.
-
-## CALC menu (`F6` on the graph, or typed `calc`)
-
-Value, zero, min/max, intersect, `dy/dx`, and numeric `fnInt` — cursor-driven
-along the graphed curve, across function/parametric/polar modes.
+Type `[A]` … `[J]` directly into a home-screen expression, or use the matrix
+editor. Determinant, inverse, transpose, `rref`/`ref`, `rank`, `eigenvals`,
+`eigenvec`, and a numeric `solve`.
 
 ## Complex numbers
 
 Expressions like `3+2i` or `sqrt(-4)` evaluate according to the MODE screen's
 Number row. In REAL mode a non-real result reports "Non-real result" rather
-than `NaN`; `a+bi` and `r∠θ` modes display the complex value in that form.
+than `NaN`; `a+bi` and `r∠θ` display the complex value in that form.
 
-## CAS (`F6` from Home, or typed `cas`)
+## CAS (`F6` from home, or `cas`)
 
 `simplify`, `expand`, `factor`, `diff`, `integ` and `solve` are also ordinary
-functions you can call inline from the home screen — `diff(x^2, x)` works
-without opening a menu.
+functions you can call inline — `diff(x^2, x)` works without opening a menu.

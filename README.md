@@ -91,7 +91,7 @@ reaching for the button. Full setup notes:
 
 | If you want to… | Read |
 |---|---|
-| Use the calculator | [USAGE.md](USAGE.md), and `F5` HELP on the device |
+| Use the calculator | [USAGE.md](USAGE.md), and `help` on the device |
 | Know what it can do | [FEATURES.md](FEATURES.md) |
 | See what's built and what's next | [ROADMAP.md](ROADMAP.md) |
 | Build, test or contribute | [CONTRIBUTING.md](CONTRIBUTING.md) |
