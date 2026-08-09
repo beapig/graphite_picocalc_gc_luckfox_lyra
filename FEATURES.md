@@ -91,7 +91,7 @@ explains where it stops and why.
 - **Two boards, one source tree** — Pico 1 H (RP2040, Cortex-M0+, softfloat)
   and Pico 2 H (RP2350, Cortex-M33, hardware FPU) both build from the same
   code, with the hardware differences confined to `src/platform/`.
-- **Built-in help browser** (`F5` from Home) — the function catalog is driven
+- **Built-in help browser** (type `help` or `?`) — the function catalog is driven
   by the same table the parser registers from, so it cannot drift from what the
   firmware actually accepts.
 - **Swappable 8x16 fonts** at build time
