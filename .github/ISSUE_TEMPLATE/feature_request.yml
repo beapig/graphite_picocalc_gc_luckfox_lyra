@@ -1,0 +1,59 @@
+name: Feature request
+description: Something the calculator should be able to do and can't
+labels: ["type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Requests are tracked whether or not they get scheduled — an
+        unscheduled one is not a rejected one. What makes a request
+        actionable a year later is *why* it was raised, so the context
+        field below matters more than it looks.
+
+        Worth knowing before you write: this firmware runs in 264 KB of
+        RAM on a 4 KB stack, so "how much does it cost" is a real question
+        for almost every feature. An answer of "I don't know" is fine —
+        it is not your job to size it.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What should it do?
+      description: Describe the behaviour you want, not the implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: why
+    attributes:
+      label: What made you want it?
+      description: >
+        What were you doing when you hit the gap? This is the field that
+        keeps a request meaningful after everyone has forgotten the
+        conversation — a concrete "I was trying to X and had to Y
+        instead" is worth more than a general statement of principle.
+    validations:
+      required: true
+
+  - type: input
+    id: prior-art
+    attributes:
+      label: Does a TI calculator do this?
+      description: >
+        If so, which model and what is it called there? The TI-83/84+ is
+        this project's reference for behaviour, so parity is a strong
+        argument. Not a requirement — plenty of good ideas aren't on a TI.
+      placeholder: TI-84+ — "SortD(" under the LIST OPS menu
+    validations:
+      required: false
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Is there a way to do it today?
+      description: >
+        Even a clumsy one. A workaround lowers urgency without lowering
+        value, and knowing it exists changes how the request gets
+        scheduled rather than whether it is wanted.
+    validations:
+      required: false

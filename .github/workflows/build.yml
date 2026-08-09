@@ -107,6 +107,12 @@ jobs:
         run: |
           python3 scripts/validate_md.py docs/ AGENTS.md \
             README.md FEATURES.md USAGE.md ROADMAP.md CONTRIBUTING.md NOTICE.md
+      # A malformed issue form is not reported by GitHub — the template just
+      # stops appearing in the chooser — so it has to be caught here.
+      - name: Validate issue templates
+        run: |
+          pip install "$(grep -i '^PyYAML==' requirements-dev.txt | cut -d' ' -f1)"
+          python3 scripts/validate-issue-templates.py
 
   release:
     name: Publish release artifacts

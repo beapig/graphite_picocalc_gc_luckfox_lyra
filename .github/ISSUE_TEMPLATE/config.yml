@@ -1,0 +1,13 @@
+# Blank issues stay enabled: not every report fits a form, and a template
+# that turns people away is worse than an unlabelled issue.
+blank_issues_enabled: true
+contact_links:
+  - name: How do I use it?
+    url: https://github.com/moodoki/graphite_picocalc_gc/blob/main/USAGE.md
+    about: Screens, keys, and the modifier conventions. The device also has a help browser — F5 from the home screen.
+  - name: Why is it built this way?
+    url: https://github.com/moodoki/graphite_picocalc_gc/blob/main/docs/notes/decisions.md
+    about: The decision log records the reasoning behind most non-obvious choices, including the ones that turned out wrong.
+  - name: Building and contributing
+    url: https://github.com/moodoki/graphite_picocalc_gc/blob/main/CONTRIBUTING.md
+    about: Toolchain setup, the host test suite, repo layout and the layer rules.
