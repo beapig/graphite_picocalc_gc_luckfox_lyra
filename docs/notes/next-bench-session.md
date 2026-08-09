@@ -1,5 +1,11 @@
 # Next bench session — D14 rail settle
 
+> **Tracked as [issue #25](https://github.com/moodoki/graphite_picocalc_gc/issues/25)**
+> since 2026-08-10. The brief below stays here — it is bench setup detail, not
+> a work item — and the issue exists so the item is visible in the backlog
+> rather than only in a file nobody opens between bench sessions.
+
+
 Split out of `next-session.md` to keep it short. This is the last deferred
 hardware item; pull it back into focus when a scope/bench session is actually
 scheduled. Linked from `next-session.md`.

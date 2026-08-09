@@ -1,9 +1,17 @@
 # Issue tracking — GitHub Issues, and what stays in the repo
 
 **Date**: 2026-08-10
-**Status**: Proposal. The tooling (`scripts/gh-issues.py`) is written and
-working; the migration itself has not been done. Nothing here takes effect
-until issues are actually created.
+**Status**: **Done, same day.** Labels and milestones created, 14 issues
+opened (#14–#27), `wishlist.md` closed to new entries. The sections below are
+kept as written — they are the reasoning the migration was carried out on, and
+the "what this does not solve" section is still the operating rule.
+
+One deliberate deviation from the plan below: `next-session.md`'s **Open design
+threads** section was *not* bulk-migrated. Most of its entries are marked
+resolved or DONE inline and what remains is "judge on device" watch-items, so
+filing them would have made the backlog worse rather than better. The two
+genuinely open items from it were filed as #26 and #27, and the section is
+annotated to send new threads to Issues.
 
 ## Why change anything
 

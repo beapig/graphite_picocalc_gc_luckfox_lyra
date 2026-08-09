@@ -1115,6 +1115,17 @@ observed across either pass.
 
 ## Open design threads
 
+> **Historical, as of 2026-08-10.** Most entries below are marked resolved or
+> DONE inline; what remains is "judge on device" watch-items rather than
+> actionable work, so they were deliberately *not* bulk-migrated to GitHub
+> Issues — filing ten resolved threads would have made the backlog worse, not
+> better. Two genuinely open items were filed:
+> [#26](https://github.com/moodoki/graphite_picocalc_gc/issues/26) (matrix
+> nesting's unattributed ~104 B/level) and
+> [#27](https://github.com/moodoki/graphite_picocalc_gc/issues/27) (Phase 6B's
+> `calc` bindings). **New open threads go to Issues, not here.**
+
+
 - **List UX watch-items (Session 11, judge on device)**: F8 clear-list is
   immediate (no confirm); list history results truncate at ~40 chars
   (`,...`); `lists`/`stats` are typed-command-only entries (now with

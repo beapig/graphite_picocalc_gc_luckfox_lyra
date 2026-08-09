@@ -207,7 +207,14 @@ def main(argv: list[str]) -> int:
     for arg in argv[1:]:
         p = Path(arg)
         if p.is_dir():
-            paths.extend(p.rglob("*.md"))
+            # Skip generated mirrors of external state (*.local.md, e.g.
+            # docs/notes/issues.local.md from scripts/gh-issues.py). Their
+            # content is written on GitHub in plain GitHub-flavoured markdown
+            # and does not follow this repo's math-mode conventions — linting
+            # it would report failures nobody can fix here. Named explicitly
+            # rather than skipped by gitignore, so an argument naming the file
+            # directly still validates it.
+            paths.extend(q for q in p.rglob("*.md") if not q.name.endswith(".local.md"))
         elif p.is_file():
             paths.append(p)
         else:
