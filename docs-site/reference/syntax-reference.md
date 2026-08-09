@@ -41,6 +41,14 @@ rejoined below, everything else is kept as its own line verbatim.
 - `expr>frac shows a fraction`
 - `(den <= 10000), >dec decimal`
 
+## EXACT FORMS
+
+- `Results with a closed form`
+- `show in amber: sqrt(8) as`
+- `2√2, pi*2 as 2π, 1/3, and`
+- `sin(pi/3) as √3/2. Use >dec`
+- `or Alt+ENTER for a decimal.`
+
 ## ANGLE MODE
 
 - `MODE sets RADIAN or DEGREE;`

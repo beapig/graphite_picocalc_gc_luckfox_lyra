@@ -37,6 +37,7 @@ rejoined below, everything else is kept as its own line verbatim.
 - `UP       recall last entry`
 - `UP/DOWN  walk input history`
 - `Alt/Ctrl+UP/DOWN scroll view`
+- `Alt+ENTER  decimal result; on an empty line, redo the last exact one as decimal`
 
 ## GRAPH
 

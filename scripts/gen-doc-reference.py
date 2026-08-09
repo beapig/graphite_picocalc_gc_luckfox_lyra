@@ -162,10 +162,58 @@ def parse_line_array(text: str, array_name: str) -> list[str]:
         m = STRING_RE.search(raw_line)
         if not m:
             continue
-        # Unescape the small set of C-string escapes actually in use.
-        literal = m.group(1).replace('\\"', '"').replace("\\\\", "\\")
+        literal = unescape_c(m.group(1))
         out.append(literal)
     return out
+
+
+# The firmware's 8x16 font puts math symbols in slots 127..141, above ASCII,
+# and the help text reaches them with octal escapes ("2\\2142" is 2-radical-2).
+# Decoding those to the real Unicode characters is the difference between a
+# docs page reading "2\\2142" and reading "2√2". Source of truth for the slot
+# map is src/gfx/font.hpp — keep these in step if it changes.
+GLYPH_SLOTS = {
+    0x7F: "\u03c0",  # pi
+    0x80: "\u2220",  # angle sign (polar phasor)
+    0x81: "\u03b8",  # theta
+    0x82: "\u03c3",  # sigma
+    0x83: "\u03a3",  # Sigma
+    0x84: "\u03c7",  # chi
+    0x85: "\u03bc",  # mu
+    0x86: "\U0001d456",  # slanted imaginary-unit i
+    0x87: "\u21d2",  # store arrow
+    0x88: "\u03bb",  # lambda
+    0x89: "\u2260",  # not-equal
+    0x8A: "\u2026",  # horizontal ellipsis
+    0x8B: "\u00b2",  # superscript two
+    0x8C: "\u221a",  # square-root radical
+    0x8D: "\u2093",  # subscript x
+}
+
+C_ESCAPE_RE = re.compile(r"\\([0-7]{1,3})|\\x([0-9a-fA-F]{1,2})|\\(.)")
+
+
+def unescape_c(literal: str) -> str:
+    """Decode the C-string escapes the help tables actually use.
+
+    Octal and hex escapes are mapped through GLYPH_SLOTS so a font slot
+    becomes the character it draws, rather than leaking as "\\214" into a
+    page someone is meant to read.
+    """
+
+    def sub(m: "re.Match[str]") -> str:
+        octal, hexa, simple = m.group(1), m.group(2), m.group(3)
+        if octal is not None:
+            code = int(octal, 8)
+        elif hexa is not None:
+            code = int(hexa, 16)
+        else:
+            # Exactly one of the three alternatives matched, so `simple` is a
+            # str here; anything not in the table passes through as itself.
+            return {"n": "\n", "t": "\t", '"': '"', "\\": "\\"}.get(simple, simple)
+        return GLYPH_SLOTS.get(code, chr(code))
+
+    return C_ESCAPE_RE.sub(sub, literal)
 
 
 def render_line_reference(title: str, src_label: str, lines_in: list[str]) -> str:
