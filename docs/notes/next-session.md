@@ -1,6 +1,54 @@
 # Start here — next session
 
-**Last session:** 2026-08-09 (last) — **Phase 5.2 task 5.2.12: on-device
+**Last session:** 2026-08-10 — **the repo went public.** No firmware changed.
+Privacy/security pass, history rewritten to drop 204 AI co-author trailers and
+116 session URLs, README split into four root docs, the backlog moved to GitHub
+Issues, the user guide written, and a landing page + wiki published and
+auto-deploying. Full narrative in [worklog.md](worklog.md).
+
+> ## Read this before touching user-facing docs
+>
+> **A derived document is not a source.** One commit on 2026-07-18 changed the
+> F-key layout and made identifiers case-sensitive. The README was never
+> updated; `USAGE.md` was then written *from the README* and inherited both
+> errors, which shipped publicly. Four files carried a wrong key map, and
+> variables were documented as `A-Z` when they are lowercase `a-z`.
+>
+> The generated pages under `docs-site/reference/` come from
+> `src/apps/help_screen.cpp` and `src/math/catalog.cpp` and are drift-checked in
+> CI. **Write user docs against those, or against source — never against other
+> prose.** Related: the on-device help lists only a subset of the typed commands
+> the home screen accepts.
+
+> ## Session-start habit
+>
+> `./scripts/gh-issues.py` mirrors the open backlog into
+> `docs/notes/issues.local.md` (gitignored). Open work is **GitHub Issues** now;
+> `wishlist.md` is an archive. What lives where is settled in
+> [issue-tracking.md](issue-tracking.md).
+
+### Open, and now tracked as issues
+
+| | |
+|---|---|
+| [#24](https://github.com/moodoki/graphite_picocalc_gc/issues/24) | **D53 root cause** — start from the address hypothesis, not concurrency. 40,000 instrumented reads came back clean. |
+| [#27](https://github.com/moodoki/graphite_picocalc_gc/issues/27) | 6B's `calc` bindings were specced against the evaluator 5.2 replaced — **re-verify before scoping 6B** |
+| [#26](https://github.com/moodoki/graphite_picocalc_gc/issues/26) | matrix nesting's unattributed ~104 B/level |
+| [#33](https://github.com/moodoki/graphite_picocalc_gc/issues/33) | host-side renderer for docs screenshots — `font.cpp` already compiles on the host |
+| [#15](https://github.com/moodoki/graphite_picocalc_gc/issues/15) / [#16](https://github.com/moodoki/graphite_picocalc_gc/issues/16) | tinyexpr: re-vendor **or** replace — alternatives, decide one and close the other |
+
+**Next phase is 6** (app framework + MicroPython), specced and not started.
+5.2's RAM win roughly doubled the Pico 1 margin for 6B's 48 KB heap (~5 KB ->
+~10 KB). Still not comfortable; `pre-phase5-review.md` lists further levers.
+
+**Manual, if the wiki ever stops updating:** the `WIKI_TOKEN` secret carries an
+expiry by design (GitHub has no wiki-only permission, so it is a full repo-write
+credential). When it lapses the `Publish wiki` job goes red on `main` and the
+wiki simply stops updating — nothing is lost. Regenerate and update the secret.
+
+---
+
+**Previous session:** 2026-08-09 (last) — **Phase 5.2 task 5.2.12: on-device
 verification, both boards. §9's measurement method did not survive contact with
 the hardware, and the Pico 1 found two bugs** (D52, D53). 5.2.12's own work is
 **done**; two defects it surfaced are **not**, and one of them should be fixed
