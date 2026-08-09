@@ -8,6 +8,10 @@ This site is the **user guide**: how to build and flash it, how to use it, and
 reference material generated straight from the firmware source so it cannot
 drift out of date.
 
+![Seven functions plotted at once on the PicoCalc's screen, in different colours over a grid, with a GRAPH FUNC status bar and a softkey bar reading 1:Y= 2:WIN 3:MODE 4:TRC 5:TBL 6:CALC.](https://raw.githubusercontent.com/moodoki/graphite_picocalc_gc/main/homepage/screenshot-graph.jpg)
+
+*Seven functions at once, on the real hardware.*
+
 ## What it does
 
 - **Calculating** — natural math display with stacked fractions and raised

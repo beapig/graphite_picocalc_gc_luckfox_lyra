@@ -68,6 +68,25 @@
   .btn.ghost { background: transparent; color: var(--fg); border-color: var(--rule); }
   .btn small { display: block; font-weight: 400; opacity: 0.85; font-size: 0.78rem; }
 
+  /* Header goes two-column once there is room for the screenshot beside the
+     text; stacks below that. The image is served from this same origin, so
+     the page still makes no third-party requests. */
+  .hero { display: flex; flex-wrap: wrap; gap: 2.5rem; align-items: center; }
+  .hero-text { flex: 1 1 22rem; min-width: 0; }
+  .shot { flex: 0 1 22rem; margin: 0; }
+  .shot img {
+    display: block; width: 100%; height: auto; max-width: 22rem;
+    border-radius: 10px; border: 1px solid var(--rule);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+  }
+  .shot figcaption {
+    margin-top: 0.7rem; color: var(--muted); font-size: 0.85rem; line-height: 1.5;
+  }
+
+  /* Buy Me a Coffee's own colour, drawn locally rather than pulling their
+     button image — the page makes no third-party requests by design. */
+  .btn.coffee { background: #ffdd00; border-color: #ffdd00; color: #14140f; }
+
   section { padding: 3.25rem 0; border-bottom: 1px solid var(--rule); }
   h2 { font-size: 1.45rem; margin: 0 0 1.5rem; letter-spacing: -0.01em; }
   h3 { font-size: 1rem; margin: 0 0 0.4rem; }
@@ -95,30 +114,44 @@
 <body>
 
 <header>
-  <div class="wrap">
-    <h1>Graphite</h1>
-    <p class="tagline">
-      A TI-83/84-inspired graphing calculator, running as firmware on the
-      ClockworkPi PicoCalc. Graphing, statistics, matrices, complex numbers
-      and a symbolic CAS — on a microcontroller with 264&nbsp;KB of RAM.
-    </p>
-    <div class="badges">
-      <span class="badge">v0.4.0</span>
-      <span class="badge">RP2040 &amp; RP2350</span>
-      <span class="badge">C++17</span>
-      <span class="badge">2,599 host tests</span>
+  <div class="wrap hero">
+    <div class="hero-text">
+      <h1>Graphite</h1>
+      <p class="tagline">
+        A TI-83/84-inspired graphing calculator, running as firmware on the
+        ClockworkPi PicoCalc. Graphing, statistics, matrices, complex numbers
+        and a symbolic CAS — on a microcontroller with 264&nbsp;KB of RAM.
+      </p>
+      <div class="badges">
+        <span class="badge">v0.4.0</span>
+        <span class="badge">RP2040 &amp; RP2350</span>
+        <span class="badge">C++17</span>
+        <span class="badge">2,599 host tests</span>
+      </div>
+      <div class="buttons">
+        <a class="btn" href="https://github.com/moodoki/graphite_picocalc_gc/releases/latest/download/picocalc_graphcalc-pico.uf2">
+          Download for Pico 1<small>RP2040 · .uf2</small>
+        </a>
+        <a class="btn" href="https://github.com/moodoki/graphite_picocalc_gc/releases/latest/download/picocalc_graphcalc-pico2.uf2">
+          Download for Pico 2<small>RP2350 · .uf2</small>
+        </a>
+        <a class="btn ghost" href="https://github.com/moodoki/graphite_picocalc_gc">
+          Source on GitHub<small>MIT / GPL-2.0 — see notice</small>
+        </a>
+      </div>
     </div>
-    <div class="buttons">
-      <a class="btn" href="https://github.com/moodoki/graphite_picocalc_gc/releases/latest/download/picocalc_graphcalc-pico.uf2">
-        Download for Pico 1<small>RP2040 · .uf2</small>
-      </a>
-      <a class="btn" href="https://github.com/moodoki/graphite_picocalc_gc/releases/latest/download/picocalc_graphcalc-pico2.uf2">
-        Download for Pico 2<small>RP2350 · .uf2</small>
-      </a>
-      <a class="btn ghost" href="https://github.com/moodoki/graphite_picocalc_gc">
-        Source on GitHub<small>MIT / GPL-2.0 — see notice</small>
-      </a>
-    </div>
+
+    <figure class="shot">
+      <img src="screenshot-graph.jpg" width="337" height="331"
+           alt="The PicoCalc's 320x320 screen showing seven functions plotted at
+                once in different colours over a grid, with a status bar reading
+                GRAPH FUNC, RAD, FLT and a full battery, and a softkey bar along
+                the bottom reading 1:Y= 2:WIN 3:MODE 4:TRC 5:TBL 6:CALC.">
+      <figcaption>
+        Seven functions at once on the real hardware. Photographed, not
+        rendered — the firmware has no screenshot capture yet.
+      </figcaption>
+    </figure>
   </div>
 </header>
 
@@ -217,11 +250,31 @@
         <span>Layers, ownership, and what may include what.</span></li>
     </ul>
     <p class="muted" style="margin-top:1.5rem">
-      There is also a help browser on the device itself — <span class="mono">F5</span>
-      from the home screen — whose function catalog is generated from the same
-      table the parser registers from, so it cannot drift from what the
-      firmware actually accepts.
+      There is also a help browser on the device itself — type
+      <span class="mono">help</span> (or <span class="mono">?</span>) on the
+      home screen — whose function catalog is generated from the same table the
+      parser registers from, so it cannot drift from what the firmware actually
+      accepts.
     </p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Support the project</h2>
+    <p class="muted" style="max-width:44rem">
+      Graphite is free and open source, built for the fun of it. If it is
+      useful to you and you would like to say thanks, there is a tip jar — no
+      obligation, and nothing in the firmware is gated behind it.
+    </p>
+    <div class="buttons" style="margin-top:1.25rem">
+      <a class="btn coffee" href="https://buymeacoffee.com/moodoki">
+        ☕ Buy me a coffee<small>buymeacoffee.com/moodoki</small>
+      </a>
+      <a class="btn ghost" href="https://github.com/moodoki/graphite_picocalc_gc/issues">
+        Report a bug<small>Or ask for a feature</small>
+      </a>
+    </div>
   </div>
 </section>
 
