@@ -25,6 +25,9 @@ tree, in the order it should appear.
   - [13. Matrices](guide/13-matrices.md)
   - [14. Complex numbers](guide/14-complex-numbers.md)
   - [15. Programming](guide/15-programming.md)
+- How it works
+  - [Overview](internals/index.md)
+  - [13. What went wrong](internals/13-what-went-wrong.md)
 - Reference
   - [Function catalog](reference/function-catalog.md)
   - [Key reference](reference/key-reference.md)
