@@ -6,3 +6,4 @@ mpmath==1.4.1
 freetype-py==2.5.1  # scripts/ttf_to_utft.py (JuliaMono font test-drive raster)
 clang-format==22.1.8  # pinned so CI and local (scripts/lint.sh) agree byte-for-byte
 PyYAML==6.0.3  # scripts/validate-issue-templates.py (.github/ISSUE_TEMPLATE/*.yml)
+Pillow==12.3.0  # docs screenshot prep (crop + strip EXIF before publishing)

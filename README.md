@@ -1,5 +1,10 @@
 # Graphite — a graphing calculator for the PicoCalc
 
+[![Build](https://github.com/moodoki/graphite_picocalc_gc/actions/workflows/build.yml/badge.svg)](https://github.com/moodoki/graphite_picocalc_gc/actions/workflows/build.yml)
+[![Docs](https://github.com/moodoki/graphite_picocalc_gc/actions/workflows/docs.yml/badge.svg)](https://github.com/moodoki/graphite_picocalc_gc/actions/workflows/docs.yml)
+[![Release](https://img.shields.io/github/v/release/moodoki/graphite_picocalc_gc?label=release)](https://github.com/moodoki/graphite_picocalc_gc/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT%20%C2%B7%20firmware%20GPL--2.0-blue)](NOTICE.md)
+
 TI-83/84-inspired graphing calculator firmware for the
 [ClockworkPi PicoCalc](https://www.clockworkpi.com/picocalc), written in C++17
 on the Raspberry Pi Pico SDK. Runs on both the Pico 1 H (RP2040) and Pico 2 H
@@ -8,6 +13,13 @@ on the Raspberry Pi Pico SDK. Runs on both the Pico 1 H (RP2040) and Pico 2 H
 **[Download v0.4.0](https://github.com/moodoki/graphite_picocalc_gc/releases/latest)**
 · [Features](FEATURES.md) · [How to use it](USAGE.md) ·
 [Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md)
+
+<p align="center">
+  <img src="homepage/screenshot-graph.jpg" width="380"
+       alt="The PicoCalc screen showing seven functions plotted at once in different colours over a grid, with a GRAPH FUNC status bar and a softkey bar reading 1:Y= 2:WIN 3:MODE 4:TRC 5:TBL 6:CALC.">
+  <br>
+  <em>Seven functions at once, on the real hardware.</em>
+</p>
 
 > **Status**: feature-complete as a graphing calculator, plus a symbolic CAS.
 > Phases 0 through 5.2 are done and hardware-verified on both boards. Phase 6
@@ -114,6 +126,15 @@ on hardware.
 - [tinyexpr](https://github.com/codeplea/tinyexpr) by Lewis Van Winkle —
   expression parser
 - [ClockworkPi](https://www.clockworkpi.com/) — the PicoCalc hardware
+
+## Support
+
+Graphite is free and open source, built for the fun of it. If it is useful to
+you and you would like to say thanks:
+
+<a href="https://buymeacoffee.com/moodoki"><img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=&slug=moodoki&button_colour=b25a00&font_colour=ffffff&font_family=Inter&outline_colour=ffffff&coffee_colour=FFDD00" height="40" alt="Buy me a coffee"></a>
+
+No obligation, and nothing in the firmware is gated behind it.
 
 ## License
 
