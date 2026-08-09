@@ -16,16 +16,17 @@
 #include "pico/stdlib.h"
 
 #include "config.hpp"
+#include "platform/fault.hpp"
 #include "platform/platform.hpp"
 #include "platform/power.hpp"
 #include "platform/sd_card.hpp"
 #include "gfx/font.hpp"
 #include "gfx/framebuffer.hpp"
 #include "ui/chrome.hpp"
+#include "ui/input_line.hpp"  // kCapacity bounds the serial-injection buffer
 #include "ui/screen_manager.hpp"
 #include "math/functions.hpp"
 #include "math/lists.hpp"
-#include "math/mat_expr.hpp"
 #include "math/matrix.hpp"
 #include "math/named_lists.hpp"
 #include "apps/graph_model.hpp"
@@ -65,6 +66,11 @@ int g_bulk_fail_step = -1;
 // next boot skip the test instead of boot-looping. (Scratch 4-7 belong
 // to the boot ROM's watchdog-vector protocol; 0/1 are free.)
 constexpr uint32_t kBulkTestMarker = 0xB07DFACEu;
+
+// Hard fault on the previous boot (D47), read before anything else can
+// consume the watchdog reboot cause and reported once USB is up.
+bool g_prior_fault = false;
+platform::FaultInfo g_fault;
 
 void run_psram_bulk_test() {
     if (watchdog_caused_reboot() && watchdog_hw->scratch[0] == kBulkTestMarker) {
@@ -318,6 +324,13 @@ DiagScreen g_diag_screen;
 int main() {
     stdio_init_all();
 
+    // Before anything else can consume the watchdog reboot cause — a
+    // fault-triggered reboot looks like any other to run_self_tests().
+    g_prior_fault = platform::take_prior_fault(&g_fault);
+    // Paint the unused stack now, while it is shallow, so the heartbeat
+    // below can report how deep anything has actually gone (D47).
+    platform::paint_stack();
+
     g_init_status = platform::init();
     run_self_tests();
 
@@ -343,7 +356,7 @@ int main() {
     // Matrix variables (Phase 4A) — same all-or-nothing contract.
     bool matrices_loaded = math::matrices().load(platform::storage());
     // MatAns (last matrix result) — persisted like the named matrices.
-    bool matans_loaded = math::matexpr::load_ans(platform::storage());
+    bool matans_loaded = math::load_ans(platform::storage());
     // Device power settings (4D.19-20): brightness/APD; a missing file
     // keeps the STM32's own boot defaults.
     bool settings_loaded = platform::power::load(platform::storage());
@@ -468,7 +481,7 @@ int main() {
                     }
                 }
                 if (!matans_loaded) {
-                    matans_loaded = math::matexpr::load_ans(platform::storage());
+                    matans_loaded = math::load_ans(platform::storage());
                     if (matans_loaded) {
                         printf("late-init: matans loaded at %lu ms\n",
                                static_cast<unsigned long>(now));
@@ -504,6 +517,57 @@ int main() {
                     s->invalidate_band(0, ui::kStatusBarH);
                 }
                 dirty = true;
+            }
+        }
+
+        // Once the app has stayed up a few seconds, forget any fault streak:
+        // the BOOTSEL escape in fault_capture() is only meant to fire for a
+        // fault that recurs every boot, not for an isolated one.
+        {
+            static bool streak_cleared = false;
+            if (!streak_cleared && platform::uptime_ms() > 5'000) {
+                streak_cleared = true;
+                platform::clear_fault_streak();
+            }
+        }
+
+        // Core-0 stack high-water mark (D47). The guard says *that* it
+        // overflowed; this says how close normal work comes, which is what
+        // sizing a depth cap actually needs. 4096 is the whole of SCRATCH_Y,
+        // with core 1's stack immediately below it.
+        {
+            static uint32_t last_stack_report_ms = 0;
+            static uint32_t last_peak = 0;
+            const uint32_t now_ms = platform::uptime_ms();
+            const uint32_t peak = platform::stack_peak_used();
+            // Report on the usual 30 s cadence, but also immediately on any
+            // new high-water mark — that is the interesting event.
+            if (now_ms > 3'000 && (peak > last_peak || now_ms - last_stack_report_ms >= 30'000)) {
+                last_stack_report_ms = now_ms;
+                last_peak = peak;
+                printf("stack: peak %lu of %lu\n", static_cast<unsigned long>(peak),
+                       static_cast<unsigned long>(platform::stack_total()));
+            }
+        }
+
+        // Previous boot ended in a hard fault (D47). Repeated on the
+        // same 30 s heartbeat as the others rather than printed once at
+        // boot — a one-shot before USB enumerates is a one-shot nobody
+        // sees, and this is exactly the line worth not missing.
+        if (g_prior_fault) {
+            static uint32_t last_fault_report_ms = 0;
+            const uint32_t now_ms = platform::uptime_ms();
+            if (now_ms > 3'000 && now_ms - last_fault_report_ms >= 30'000) {
+                last_fault_report_ms = now_ms;
+                printf(
+                    "fault: core %lu streak %lu  pc=0x%08lx lr=0x%08lx sp=0x%08lx  "
+                    "stack %lu of %lu\n",
+                    static_cast<unsigned long>(g_fault.core),
+                    static_cast<unsigned long>(g_fault.streak),
+                    static_cast<unsigned long>(g_fault.pc), static_cast<unsigned long>(g_fault.lr),
+                    static_cast<unsigned long>(g_fault.sp),
+                    static_cast<unsigned long>(g_fault.depth),
+                    static_cast<unsigned long>(platform::stack_total()));
             }
         }
 
@@ -579,6 +643,97 @@ int main() {
         // Soft-sleep APD (4D.19): inactivity timer + the paced STM32
         // backlight write queue live in power::tick().
         platform::power::tick();
+
+#if PICOCALC_SERIAL_INJECT
+        // Serial line injection (Phase 5.1, tasks 5.1.2/5.1.3). Nothing else
+        // in the firmware reads stdin, so any byte arriving here is a host
+        // script submitting an expression to the home screen.
+        //
+        // The buffer is static (bss): this runs on core 0, whose whole stack
+        // is 4 KB, and D47/D48 were both about buffers sitting on it. One
+        // copy is safe because only this loop touches it.
+        {
+            static char inject_buf[ui::InputLine::kCapacity];
+            static size_t inject_len = 0;
+            static bool inject_overflow = false;
+
+            // Bound the work per frame so a chattering host cannot starve
+            // rendering, the same reflex as the key drain's kMaxEventsPerFrame.
+            constexpr int kMaxInjectCharsPerFrame = 512;
+            for (int i = 0; i < kMaxInjectCharsPerFrame; ++i) {
+                const int c = getchar_timeout_us(0);
+                if (c < 0) {
+                    break;  // Nothing waiting — non-blocking
+                }
+                if (c == '\r') {
+                    continue;
+                }
+                if (c != '\n') {
+                    if (inject_len + 1 < sizeof(inject_buf)) {
+                        inject_buf[inject_len++] = static_cast<char>(c);
+                    } else {
+                        inject_overflow = true;  // Report, never truncate
+                    }
+                    continue;
+                }
+
+                inject_buf[inject_len] = 0;
+                const size_t line_len = inject_len;
+                inject_len = 0;
+                const bool was_overflow = inject_overflow;
+                inject_overflow = false;
+
+                if (was_overflow) {
+                    printf("inject: error line too long (max %u)\n",
+                           static_cast<unsigned>(sizeof(inject_buf) - 1));
+                    continue;
+                }
+                if (line_len == 0) {
+                    continue;  // Bare newline — keepalive, not a submission
+                }
+
+                // Injection targets the home screen. Popping is deterministic
+                // and is what a user would do; erroring out instead would
+                // strand an unattended script on whatever screen was open.
+                if (mgr.current() != &apps::home_screen()) {
+                    mgr.pop_to_root();
+                    printf("inject: popped to home\n");
+                }
+
+                const char* result = nullptr;
+                const char* kind = nullptr;
+                // Evaluation time, for §9's A/B pass (5.2.12). The A/B number
+                // itself is the host-side round trip, because the baseline is a
+                // *released* binary that predates this field and cannot report
+                // one. This exists to BOUND that number: the gap between the two
+                // says how much of the round trip was never evaluation, without
+                // which a small M1 delta cannot be told from USB jitter.
+                //
+                // Appended at the end of the line, never inserted, so one parser
+                // reads both builds — the baseline simply has no `us=` to find.
+                const uint64_t t0 = time_us_64();
+                const bool ok = apps::home_screen().submit_line(inject_buf, &result, &kind);
+                const uint64_t elapsed_us = time_us_64() - t0;
+                if (!ok) {
+                    printf("inject: error rejected \"%s\"\n", inject_buf);
+                } else if (result == nullptr) {
+                    // Dispatched as a typed command (cls, diag, ...), which
+                    // pushes no history entry to report.
+                    printf("inject: \"%s\" -> command\n", inject_buf);
+                } else {
+#if PICOCALC_EVAL_PROBE
+                    printf("inject: \"%s\" -> \"%s\" kind=%s us=%lu eval_us=%lu\n", inject_buf,
+                           result, kind, static_cast<unsigned long>(elapsed_us),
+                           static_cast<unsigned long>(apps::home_eval_us()));
+#else
+                    printf("inject: \"%s\" -> \"%s\" kind=%s us=%lu\n", inject_buf, result, kind,
+                           static_cast<unsigned long>(elapsed_us));
+#endif
+                }
+                dirty = true;
+            }
+        }
+#endif
 
         constexpr int kMaxEventsPerFrame = 16;
         constexpr uint64_t kDrainBudgetUs = 250'000;

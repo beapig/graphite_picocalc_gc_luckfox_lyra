@@ -199,3 +199,24 @@ what's actually shipped (Phase 4D's sequence graphing, zoom family, etc.
 — see `docs-site/SUMMARY.md` for the current 15-chapter guide order) and
 CAS/Phase 6 content is still out of scope until those phases ship, per
 this plan's original "what NOT to do" section.
+
+---
+
+## 2026-08-10 — audience split widened to four facets
+
+Ahead of making the repo public, the two-audience split above (user site,
+developer docs kept in-repo) was reconsidered and widened to four:
+**user guide**, **developer guide**, **study guide** (the algorithms —
+shunting-yard compiler, expression parser, CAS passes, memory on a
+microcontroller), and an **app developer guide** for MicroPython apps once
+Phase 6B ships.
+
+The pipeline shape settled on 2026-08-03 needs no change to carry them —
+`SUMMARY.md` is still the only nav source and the wiki flattener already
+handles arbitrary directories. See
+[docs-facets-plan.md](docs-facets-plan.md) for the structure, the study
+guide's chapter list, and the sequencing.
+
+This plan's "don't republish the developer docs verbatim" rule survives the
+widening unchanged, and now applies to the study guide too: it *draws on*
+`decisions.md`, it does not mirror it.

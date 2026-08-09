@@ -65,13 +65,13 @@ echo "== Compiling + linking test_graph =="
 
 echo "== Compiling + linking test_lists =="
 "$CXX" -std=c++17 -O1 -Wall -Wextra -DTE_POW_FROM_RIGHT \
-    -Isrc -Idrivers/tinyexpr \
+    -Isrc -Idrivers/tinyexpr -Itests/host \
     tests/host/test_lists.cpp tests/host/host_psram_backend.cpp \
+    src/math/unified_compile.cpp src/math/unified_vm.cpp src/math/unified_home.cpp \
     src/math/array.cpp src/math/scratch.cpp src/math/lists.cpp src/math/list_ops.cpp \
-    src/math/named_lists.cpp \
-    src/math/list_expr.cpp src/math/stats.cpp \
+    src/math/named_lists.cpp src/math/stats.cpp src/math/matrix.cpp \
+    src/math/array_format.cpp src/math/frac.cpp src/math/complex.cpp \
     src/math/engine.cpp src/math/functions.cpp src/math/format.cpp \
-    src/math/complex.cpp src/math/complex_expr.cpp \
     src/math/catalog.cpp src/math/dist.cpp \
     "$OUT/tinyexpr.o" "${CEPHES_OBJS[@]}" \
     -o "$OUT/test_lists"
@@ -93,13 +93,13 @@ echo "== Compiling + linking test_infer =="
 
 echo "== Compiling + linking test_matrix =="
 "$CXX" -std=c++17 -O1 -Wall -Wextra -DTE_POW_FROM_RIGHT \
-    -Isrc -Idrivers/tinyexpr \
+    -Isrc -Idrivers/tinyexpr -Itests/host \
     tests/host/test_matrix.cpp tests/host/host_psram_backend.cpp \
-    src/math/array.cpp src/math/scratch.cpp src/math/matrix.cpp src/math/mat_expr.cpp \
-    src/math/lists.cpp src/math/list_ops.cpp \
+    src/math/unified_compile.cpp src/math/unified_vm.cpp src/math/unified_home.cpp \
+    src/math/array.cpp src/math/scratch.cpp src/math/lists.cpp src/math/list_ops.cpp \
+    src/math/named_lists.cpp src/math/stats.cpp src/math/matrix.cpp \
+    src/math/array_format.cpp src/math/frac.cpp src/math/complex.cpp \
     src/math/engine.cpp src/math/functions.cpp src/math/format.cpp \
-    src/math/frac.cpp \
-    src/math/complex.cpp src/math/complex_expr.cpp \
     src/math/catalog.cpp src/math/dist.cpp \
     "$OUT/tinyexpr.o" "${CEPHES_OBJS[@]}" \
     -o "$OUT/test_matrix"
@@ -128,6 +128,20 @@ echo "== Compiling + linking test_analysis =="
     "$OUT/tinyexpr.o" "${CEPHES_OBJS[@]}" \
     -o "$OUT/test_analysis"
 
+echo "== Compiling + linking test_unified =="
+"$CXX" -std=c++17 -O1 -Wall -Wextra -DTE_POW_FROM_RIGHT \
+    -Isrc -Idrivers/tinyexpr \
+    tests/host/test_unified.cpp tests/host/host_psram_backend.cpp \
+    src/math/unified_compile.cpp src/math/unified_vm.cpp \
+    src/math/array.cpp src/math/scratch.cpp src/math/lists.cpp \
+    src/math/list_ops.cpp src/math/named_lists.cpp src/math/stats.cpp \
+    src/math/matrix.cpp src/math/array_format.cpp src/math/frac.cpp \
+    src/math/complex.cpp \
+    src/math/engine.cpp src/math/functions.cpp \
+    src/math/format.cpp src/math/catalog.cpp src/math/dist.cpp \
+    "$OUT/tinyexpr.o" "${CEPHES_OBJS[@]}" \
+    -o "$OUT/test_unified"
+
 echo "== Compiling + linking test_complex =="
 "$CXX" -std=c++17 -O1 -Wall -Wextra \
     -Isrc \
@@ -136,9 +150,12 @@ echo "== Compiling + linking test_complex =="
 
 echo "== Compiling + linking test_complex_expr =="
 "$CXX" -std=c++17 -O1 -Wall -Wextra -DTE_POW_FROM_RIGHT \
-    -Isrc -Idrivers/tinyexpr \
-    tests/host/test_complex_expr.cpp \
-    src/math/complex.cpp src/math/complex_expr.cpp \
+    -Isrc -Idrivers/tinyexpr -Itests/host \
+    tests/host/test_complex_expr.cpp tests/host/host_psram_backend.cpp \
+    src/math/unified_compile.cpp src/math/unified_vm.cpp src/math/unified_home.cpp \
+    src/math/array.cpp src/math/scratch.cpp src/math/lists.cpp src/math/list_ops.cpp \
+    src/math/named_lists.cpp src/math/stats.cpp src/math/matrix.cpp \
+    src/math/array_format.cpp src/math/frac.cpp src/math/complex.cpp \
     src/math/engine.cpp src/math/functions.cpp src/math/format.cpp \
     src/math/catalog.cpp src/math/dist.cpp \
     "$OUT/tinyexpr.o" "${CEPHES_OBJS[@]}" \
@@ -165,6 +182,21 @@ echo "== Compiling + linking test_seq =="
     src/math/catalog.cpp src/math/dist.cpp \
     "$OUT/tinyexpr.o" "${CEPHES_OBJS[@]}" \
     -o "$OUT/test_seq"
+
+echo "== Compiling + linking test_cas =="
+"$CXX" -std=c++17 -O1 -Wall -Wextra -DTE_POW_FROM_RIGHT \
+    -Isrc -Idrivers/tinyexpr \
+    tests/host/test_cas.cpp \
+    src/math/cas/expr.cpp src/math/cas/parser.cpp src/math/cas/serialize.cpp \
+    src/math/cas/simplify.cpp src/math/cas/derivative.cpp src/math/cas/expand.cpp \
+    src/math/cas/poly.cpp src/math/cas/solve.cpp src/math/cas/factor.cpp \
+    src/math/cas/integrate.cpp src/math/cas/cas_eval.cpp src/math/cas/exact.cpp \
+    src/math/numeric_solve.cpp \
+    src/math/engine.cpp src/math/functions.cpp src/math/format.cpp \
+    src/math/frac.cpp src/math/catalog.cpp src/math/dist.cpp src/math/complex.cpp \
+    src/math/scratch.cpp \
+    "$OUT/tinyexpr.o" "${CEPHES_OBJS[@]}" \
+    -o "$OUT/test_cas"
 
 echo "== Compiling + linking test_stats =="
 "$CXX" -std=c++17 -O1 -Wall -Wextra -DTE_POW_FROM_RIGHT \
@@ -210,8 +242,14 @@ echo "== Running test_units =="
 echo "== Running test_seq =="
 "$OUT/test_seq"
 
+echo "== Running test_cas =="
+"$OUT/test_cas"
+
 echo "== Running test_stats =="
 "$OUT/test_stats"
+
+echo "== Running test_unified =="
+"$OUT/test_unified"
 
 echo "== Running test_complex =="
 "$OUT/test_complex"

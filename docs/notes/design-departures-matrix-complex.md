@@ -178,6 +178,29 @@ in 4D, this idea's own trigger condition below is expected to fire once
 4D closes — treated as the de facto next architecture pass, though not
 yet given its own phase/week slot the way A-E/G now have.
 
+**Update (2026-08-08, D48): F is now judged worth the effort, and it gains
+a design constraint it did not have before — build it on an explicit
+evaluation stack, not the call stack.** Two independent arguments now point
+here rather than one. The correctness argument is D46: the real and complex
+evaluators had silently disagreed about DEGREE-mode trig since Session 18,
+which is the class of bug unification removes. The structural argument is
+this session's: **four parsers, four separately-discovered stack budgets,
+three of them found by something crashing** — D45 capped the CAS parser,
+D47 capped tinyexpr and complexexpr, and D48 capped `matexpr` only after a
+reproducible hard fault (`sp` below `__StackBottom`, into core 1's stack).
+Each cap was sized by its own measurement pass against core 0's 4 KB.
+
+`matexpr`'s cap landed at depth 3 with **84 bytes of margin** — containment,
+not headroom. The way out is an iterative parser whose depth lives in an
+explicit operand/operator stack rather than in call frames, because that
+array can be sized freely and, being accessed sequentially, is genuinely
+PSRAM-friendly (unlike a call stack: `psram.hpp` is PIO-driven SPI and not
+memory mapped, so no stack can live there). **That rewrite belongs to F, not
+to `matexpr`** — F retires `matexpr` outright, so building it there would be
+thrown away. Decided 2026-08-08: live with the caps until F, and give F an
+explicit, PSRAM-capable evaluation stack from the start rather than letting
+it inherit a fourth frame budget.
+
 Everything above is a bilateral patch (complex+variables, complex+lists,
 complex+matrices, list+matrix). The pattern suggests the actual seamless
 answer is architectural: replace `matexpr`, `complexexpr`, and `listexpr`
@@ -201,10 +224,18 @@ This is the highest-leverage idea and also the highest-risk one:
   — generalizes: a unified tagged-`Value` evaluator must stay strictly
   home-screen-only, exactly like `evaluate_complex()` today.
   `evaluate_real()` (tinyexpr++, graphing/tables/stats) is never touched.
-- Memory: a tagged union big enough for `{real, complex, matrix-ref,
+- ~~Memory: a tagged union big enough for `{real, complex, matrix-ref,
   list-ref}` is larger per node than any of today's three narrower
-  evaluators' working types — needs a real sizing pass against Pico 1's
-  headroom before committing, same caution as C.
+  evaluators' working types~~ — **measured 2026-08-09 and wrong.** On the
+  target the union is **24 B** against `matexpr::Value`'s **32 B**
+  (`{bool; Complex; const Array*}`, which carries a full `Complex` *and* a
+  pointer without overlapping them). The union is *smaller* than what one of
+  the three already uses. Worse for this caveat: retiring the three
+  evaluators **frees ~10 KB of bss**, 8.4 KB of it `listexpr`'s string
+  scratch, which exists only because that evaluator rewrites text rather
+  than computing over values. So F is expected to *reduce* memory pressure,
+  not add to it. Full numbers in [phase5.2-spec.md](../phases/phase5.2-spec.md)
+  §5. The caution this was modelled on (idea C) may deserve the same check.
 
 Historical note (pre-2026-07-24 framing): "not recommending this now... worth
 revisiting as a refactor once/if two or more of B–E actually ship and the

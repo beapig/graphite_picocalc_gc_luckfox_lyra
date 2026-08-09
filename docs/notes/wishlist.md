@@ -10,6 +10,201 @@ only of features that don't yet have a home.
 
 ## Active (unscheduled)
 
+- **Collapse `Kind::kMatrix` and `Kind::kList` into one shape-driven array kind**
+  (raised 2026-08-09 while re-evaluating the change register's preserved rows
+  after 5.2.12). **The storage is already unified and that is the common
+  misconception about this item**: `math::Array` is one type with `ndim_` in
+  {1,2}, one `dtype_`, one SRAM/PSRAM backing and one set of accessors —
+  `is_list()` is literally `ndim_ == 1`. What is still split is the `Value` tag
+  (~25 branch sites in `unified_vm.cpp`) and the `listops::`/`matops::`
+  namespaces. So the change is "let shape drive behaviour", not "share storage".
+  - **It is a correctness-and-clarity change, not a performance one.** Checked
+    against all three of the phase's measured regressions and it moves none of
+    them: **M6** is pure scalar tier — its ~4.6 us re-entry and ~1.7x per-op rate
+    never touch the array tag — while **M2** is memory bandwidth (streaming
+    passes) and **M5** is a fixed compile cost. Nobody should scope this
+    expecting a speedup.
+  - **P6 would be fixed for free.** It says "a returned *list* `Value` is valid
+    only until the next `run()`", but `unified_eval.hpp:83` already states the
+    rule for both kinds — the lifetime contract is kind-agnostic today and P6
+    just describes half of it. Collapsing the tag corrects the wording and
+    changes nothing else.
+  - **P5 would dissolve, but by obsolescence rather than repair.** Its aliasing
+    hazard — `mat2list` writes named list slots the operand stack may hold by
+    reference — is about slot mutation plus a by-reference stack, and unification
+    does not touch either. But `mat2list` exists only to unpack matrix columns
+    into list variables, and under a shape-driven model that is a **slice**,
+    which *returns a value* instead of *writing slots* and so has no hazard at
+    all. Note this is a **second, independent route** to P5 dissolving (the
+    register's re-evaluation names the by-reference model as the first), which
+    makes P5 the weakest-anchored of the preserved rows.
+  - **Where the real cost is**, and it should be scoped before anyone starts:
+    (a) **error messages are derived from kind checks** — `unified_vm.cpp`
+    gates on `Kind::kMatrix` at 1126/1146/1306/1453 to produce "Expected a
+    matrix", "Store target mismatch" and friends, so every one has to be
+    re-derived from shape. That is E-class register churn, which 5.2 found to be
+    the expensive kind (E8 was the single row the phase could not cheaply
+    change). (b) **`copy` genuinely disagrees**: `eval_shim.hpp:90` records that
+    `matops::copy` would *reshape* a 1-D array where `listops::copy` does not —
+    a semantic decision, not a mechanical merge.
+
+- **Re-vendor tinyexpr from upstream `master`, and drop our local `factor()`
+  fix** (raised 2026-08-09 while checking whether D51 was worth reporting
+  upstream — it was not, because it was already fixed there). The project was
+  dormant for years and then landed **22 commits on 2026-08-05**, four days
+  before ours. `drivers/README.md`'s policy already decides the direction —
+  "port their fix if it is equivalent" — and it **is** equivalent: their
+  [`1e2ba48`](https://github.com/codeplea/tinyexpr/commit/1e2ba481) fixes both
+  defects D51 fixes, by a different route, and our 46-case corpus passes on
+  `master` with 0 failures. Carrying a private fork of a fix that exists
+  upstream is the thing to stop doing. **But `master` is not a drop-in**, which
+  is why this is a wishlist item and not a chore:
+  - It merged the **logic branch**, so `!` is now prefix logical-not. We use
+    `!` as *postfix factorial*. `Engine::preprocess` rewrites every `!` to
+    `fac(...)` before the parser sees one, so nothing breaks today — but that
+    containment stops being incidental and starts being load-bearing, and `!=`
+    would acquire a meaning.
+  - [`a851f2b`](https://github.com/codeplea/tinyexpr/commit/a851f2be) **"Limit
+    parser recursion depth, fixes #136" is D47's bug, fixed upstream** — inside
+    the parser, counting what actually recurses, where our `kMaxParseDepth = 7`
+    is a paren-count pre-scan bolted on outside it (`engine.cpp`). Adopting
+    theirs could retire ours, which is the real prize here.
+  - Also locale-independent number parsing, `unsigned char` ctype fixes, ARMCC
+    support, and an upstream CI workflow.
+  - Sequencing note: this touches the evaluator that **Phase 5.2's §9 A/B
+    measurement uses as its baseline**, so do it either before that measurement
+    or well after — not between the two halves of it.
+
+- **Replace tinyexpr with the unified evaluator on the numeric path too**
+  (raised 2026-08-09, **D50**, spec P5.2-7). **The alternative to the item
+  above, and they resolve the same two problems by opposite routes** — a
+  re-vendor keeps tinyexpr and adopts upstream's depth limit; this one deletes
+  tinyexpr and the depth limit with it. Whichever is decided first should
+  discharge the other rather than both being carried. Would make it four
+  parsers → *one*, remove tinyexpr's depth-7 parse cap from graphing (D47) and
+  return 7,897 B of flash.
+  ~~**Revisit after Phase 5.2 closes**, and not before §9's M1 has measured
+  per-sample latency…~~ — **that number now exists, and it argues against
+  doing this** (5.2.12, D50's amendment, spec P5.2-7). Measured on the shape
+  that matters — `listops::seq` compiles once and evaluates many, which is the
+  graphing pattern — the VM is **~1.75x slower per operation** than tinyexpr's
+  compiled tree walk, plus ~4.6 us/element of fixed re-entry. Seven Y= slots at
+  three operations would go **86.6 → 152.3 ms per redraw**, on the screen
+  **D10 leg B already exists to speed up**. M1's one-shot win (−22 to −32%)
+  comes from dropping the REAL-mode double evaluation and does not transfer to
+  repeated evaluation.
+  - **Two of the costs listed here have since been corrected**, so do not carry
+    them forward unexamined. The **14.4 KB** `Program` figure assumed caching
+    Y1-Y7 compiled; nothing requires that, and compile is a fixed ~0.19 ms
+    against ~12 ms of evaluation per redraw, so compile-per-redraw is fine. And
+    **flash would improve**, not worsen: −7,897 B returned against the +1,960
+    (Pico 1) / +3,320 (Pico 2) that 5.2 spent.
+  - Still standing: `compile()`/`run()` are non-reentrant singletons and the
+    numeric path re-enters them; the chunk staging overlays the `kCompute` arena
+    that `stats`/`matrix`/`infer` own; and there is no differential corpus off
+    the home screen, where 5.2.9 found three bugs inside covered territory.
+  - `phase4-spec.md` §5.2's "would double arithmetic cost" does **not** argue
+    against this — it argued against a `Complex` numeric value type, and this
+    evaluator keeps a real tier. The valid argument is the measured one above.
+  - **What would have to change first**: the gap is a ~4.6 us fixed per-call
+    re-entry (VM entry/exit, plausibly attackable alone) plus a ~1.7x
+    per-operation rate (flat RPN with switch dispatch against a direct tree walk
+    through function pointers). **Nothing was profiled**, so neither is
+    established as irreducible — nor as fixable.
+
+- **Screenshot capture — serial dump (debug aid) + save-to-SD (user feature)**
+  (raised 2026-08-05, same session as serial key injection — two uses of the
+  same underlying capability; that item has since graduated to **Phase 5.1**,
+  and note its scoping found that *this* item is **not** a prerequisite for
+  reading result colour, since `HomeScreen::ResultKind` already encodes it). Frame is 320x320 RGB565 (200 KB raw),
+  identical resolution/format on both boards, but the capture path differs
+  sharply by board: **Pico 2** holds a complete frame in SRAM at once
+  (`frame_buf`, `src/gfx/framebuffer.cpp:17`) with a genuinely stable window
+  to read it — right after `render()` returns and before the next frame's
+  `drain_acks()` lets core 0 overwrite it again
+  (`framebuffer.cpp:104-109`). **Pico 1 never has a full frame in SRAM at
+  all** — it renders in 16-row strips (`config::kStripHeight`, ~20
+  calls/frame) into two 10 KB ping-pong buffers; a screenshot there means
+  accumulating each finished strip (grabbed right before `submit()`, not by
+  re-entering `render()`, to respect the idempotent-`render()` strip
+  contract in `phase3-spec.md` §8) into a scratch region — SRAM doesn't have
+  200 KB of spare headroom on Pico 1, so PSRAM (not memory-mapped, only
+  `read()`/`write()` via PIO/SPI, `psram.hpp:38-39`, ~6.8 MB/s HW-measured
+  bulk throughput — ~29 ms for a full frame) is close to mandatory as the
+  accumulator there, optional on Pico 2. Both boards' core-1 display-push
+  path is `__not_in_flash_func` (RAM-resident) per D10, because running it
+  from flash while core 0's USB/TinyUSB stack is active hard-faults the chip
+  (shared XIP cache contention) — any new capture code touching the
+  display/DMA path from core 1 while USB is live must stay RAM-resident
+  too, same landmine D10 already fought.
+  - **Debug-aid variant (serial dump)**: stream the captured frame out over
+    `stdio_usb` (already enabled, output-only today — printf diagnostics
+    only, nothing reads stdin, no existing screenshot code anywhere in the
+    repo including the vendored `picocalc_diag` bring-up target). Actual
+    `stdio_usb` throughput is **undocumented/unmeasured anywhere in this
+    project** — needs a real bench number before committing to raw dump vs.
+    an encoding; given calculator screens are mostly sparse/few-color
+    (`display.hpp:20-34`'s small fixed palette), simple RLE is very likely
+    worth it over a raw 200 KB dump, but that's inference, not measured.
+    Host-side capture script would need to assert DTR/RTS the same way
+    `scripts/serial-capture.py` already does for other serial reads, or
+    output will silently drop.
+  - **User-facing variant (save to SD)**: write the captured frame to
+    storage as a file (format/encoding TBD — raw RGB565 dump, or convert to
+    a standard image format like BMP/PPM for viewing off-device without
+    custom tooling). No existing SD image-write path to build on; would
+    follow the existing `Storage`/persistence conventions used elsewhere
+    (list/matrix/graph-state files) for the write side, but the pixel
+    encoding itself is new design work.
+  - No prior design work on either variant before this session; no phase
+    home.
+- **Inverse-trig exact forms** (raised 2026-08-05, Pico 2 Stage 5 testdrive):
+  `asin(1)` shows `1.570796327` where the forward direction already shows
+  `sin(pi/6)` as `1/2`. D44 built a *forward* special-angle table only
+  (`src/math/cas/exact.cpp`, 24 entries indexed in twelfths of $\pi$), so
+  nothing recognizes `asin(1)` as $\pi/2$ or `atan(1)` as $\pi/4$. The
+  symmetric completion needs its own table over the inverse arguments
+  ($0$, $\pm 1/2$, $\pm\sqrt{2}/2$, $\pm\sqrt{3}/2$, $\pm 1$ for asin/acos;
+  $0$, $\pm\sqrt{3}/3$, $\pm 1$, $\pm\sqrt{3}$ for atan), angle-mode
+  awareness (in DEGREE, `asin(1)` is a plain `90` and correctly stays
+  white), and its own tests — comparable in size to D44. Deliberately
+  deferred out of Phase 5 Stage 5 rather than grown into a hardening
+  session; no design work beyond this note.
+- **Say *why* an editor field is invalid, not just colour it red** (raised
+  2026-08-08, Pico 1 testdrive). Today `SlotEditorScreen::render()` draws a
+  row white or red off a single cached bool (`valid_mask_`, D47), and
+  `field_valid()` → `Engine::compile()` throws the reason away — the engine
+  returns `nullptr` for every failure mode alike, so the UI genuinely does
+  not know whether it is a syntax error, an unknown identifier, a non-real
+  variable, or (since D47) an expression nested past `kMaxParseDepth`. The
+  trigger was exactly that ambiguity: after the D47 fix Y1 sat red with no
+  hint that the cause was nesting depth. Same gap in the list, matrix and
+  seq editors.
+  - Shape: give the compile path an out-parameter for a static reason
+    string. tinyexpr already hands back an error *offset* from
+    `te_compile`'s `int *error`, which `Engine::compile` currently discards
+    (`engine.cpp`) — that would also allow pointing at the offending
+    character, not just naming the problem.
+  - Display is the harder half on a 320x320 panel: rows are 26 px and the
+    expression text already truncates with an ellipsis before the enable
+    checkbox. Likely a status line at the bottom for the *selected* row
+    only, rather than per-row text.
+  - Note the D47 constraint: whatever this does must not put the compiler
+    back inside `render()`. The reason string has to be cached alongside
+    the valid bit, refreshed from `on_activate()`/`on_key`.
+- **Crosshair (horizontal line) in trace mode** (raised 2026-08-08, Pico 1
+  testdrive, as a question — "is trace supposed to show a horizontal line
+  too?"). It is not: `draw_trace` renders a full-height *vertical* line plus
+  a 5x5 cursor square in the slot's colour (`graph_screen.cpp:1102-1105`,
+  and the param/polar/seq path at `:1228-1231`). No decision ever specified
+  a crosshair, so this is unimplemented rather than broken. Adding the
+  horizontal arm is small — one `draw_hline` at the cursor row, skipped when
+  the point is offscreen — but worth judging on device first: the panel is
+  320 px and a full-width line may read as clutter against the grid, so a
+  short arm around the cursor, or a MODE toggle, may be better than a full
+  crosshair. TI-84 itself draws neither: it flashes a small cursor on the
+  curve with the readout at the bottom, which is closer to what this already
+  does.
 - **Copy/paste in expression editors** (raised 2026-08-02, Pico 2 testdrive):
   no way to copy text between fields — e.g. duplicating one Y= expression
   into another slot means retyping it in full on the physical keypad. No
@@ -31,6 +226,18 @@ only of features that don't yet have a home.
 
 ## Graduated — now planned
 
+- **Serial key injection for on-device test automation** (raised
+  2026-08-05, Pico 1 testdrive) -> **Phase 5.1** (see
+  [phase5.1-spec.md](../phases/phase5.1-spec.md), tasks 5.1.1-5.1.6),
+  scoped 2026-08-08 to the line-oriented variant. Per-keystroke `KeyEvent`
+  synthesis stays deferred with an explicit revival trigger (that spec's
+  section 7). Two findings closed the gap between "idea" and "planned": the
+  sibling screenshot item below is **not** a prerequisite, because
+  `HomeScreen::ResultKind` (`home_screen.hpp:36`) already encodes
+  white/amber/error and can simply be printed; and flashing no longer needs
+  the BOOTSEL button (`picotool load -f -x`), leaving keyboard input as the
+  last manual step in the bench loop. Motivated by D48, whose bench work
+  needed ~15 hand round-trips to land one integer.
 - **Pi-multiple axis ticks + `▶Frac`/`▶Dec` fraction answers** (split off
   the old "Symbolic display" item) → Phase 4, sub-phase **4D** (see
   [phase4-spec.md](../phases/phase4-spec.md) §7.1, tasks 4D.2/4D.3).
@@ -68,6 +275,20 @@ only of features that don't yet have a home.
   committed — listed there rather than shipped.
 
 ## Completed / Closed
+
+- **Fix tinyexpr's `(-2)^2 = -4`** (listed here 2026-08-09 after Phase 5.2's
+  differential harness found it; **D50** scoped it out of that phase) →
+  **shipped the same day as D51**, on `main`, released as **v0.3.2**,
+  HW-verified on the Pico 2. It never spent a session on this list, which is
+  the point: it was a bugfix that stood alone and was not gated on 5.2.
+  **The estimate here was wrong in a useful direction** — "~5 lines,
+  parse-time only" turned into a rewrite of `factor()`, because patching at
+  the source exposed a **second** defect in the same function (`2^-3^2`
+  returned 512: the right-associative insertion loop re-based a negated
+  exponent). 5.2 covers neither that one nor graphing; only the vendored
+  parser does. See D51 and `drivers/README.md` "Local modifications" — this
+  is the project's first local fix to a vendored driver, so a re-vendor must
+  re-apply it.
 
 - **Coarsen too-dense grid lines** (usage feedback 2026-07-25) → **shipped
   same day**, no phase/D-number (small, localized fix). When `Xscl`/`Yscl`

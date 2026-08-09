@@ -18,6 +18,1695 @@ Format:
 
 ---
 
+## D53: per-element PSRAM reads are intermittently wrong — list *display* corrupts where the arithmetic does not
+
+**Date**: 2026-08-09
+**Status**: Accepted — **PARTIALLY RESOLVED**: the one reachable path is fixed and verified, the root cause is unknown, and the entry stays open
+**Context**: Found by 5.2.12's Pico 1 leg (D52), which is the first time anything
+replayed the same list expression tens of times in a row on that board. Typing it
+once, as every previous bench pass did, would never have shown it.
+
+`l1/499500` with `l1 = seq(x,x,1,999,1)` renders element 1 as
+**`4.004007642e-6`** instead of `4.004004004e-6` on roughly **8 runs in 30**, on
+the same board, same session, same input. Rate is **identical on v0.3.2 and on
+phase-5.2** (8/30 both), so this is **shipped behaviour, not a phase regression**.
+
+**The stored data is fine; one *read path* is not.** Getting this right took
+three tries and two of them were wrong, which is worth recording because both
+failures were the same mistake:
+
+1. `sum(l1*1)` returned `499500` on 20/20 — read as "values are correct". It
+   cannot show anything: a 1.8e-6 element error moves a 499,500 sum to
+   499500.0000018, which formats identically at 10 significant figures.
+2. `sum(l1/499500)` returned exactly `1` on 25/25 — read as confirmation, and
+   written up as "the values are correct, only the rendering is wrong". Also
+   blind, and worse: after division the element error is **3.6e-12**, so the sum
+   is 1 + 3.6e-12. Arithmetic on the corrupt value that was *supposed* to expose
+   it instead buried it deeper.
+3. `sum(l1)-499500` returns `0` on 25/25. **This one can see it** — subtracting
+   the expected total leaves a 1.8e-6 residue with nothing to hide behind.
+
+So the third test is the one that means something, and it says the **bulk** path
+reads correct data. But the corrupt element is real, not a formatting artifact:
+`4.004007642e-6 x 499500 = 2.0000018`, i.e. `l1[1]` genuinely came back as
+2.0000018 instead of 2. **A sum is the wrong instrument for a single-element
+fault**, and reaching for one twice cost this investigation more than the bug did.
+
+**The split is by access pattern, not by data**: `read_range` (bulk, used by
+every compute path) is clean; `Array::get` (one 8-byte PSRAM transfer per
+element, used by display) is not.
+
+**Mechanism**, as far as the evidence goes:
+
+- `format_list` (`array_format.cpp:98`) reads **one element at a time** through
+  `Array::get(i)` (`array.cpp:26`), which for a PSRAM-backed array is an 8-byte
+  `psram_backend::read`. A 999-element list is 999 separate PIO/SPI transfers.
+- The compute path does **not** do this — it streams in chunks — and the compute
+  path is clean.
+- `kSlabBytes = 2048` (256 doubles, D21) is the SRAM/PSRAM threshold, so a
+  100-element list lives in SRAM and **never corrupts**, while a 999-element one
+  lives in PSRAM and does. That threshold is also what M4's 256/257 pair
+  straddles — it is not a streaming chunk boundary, and 5.2.12 initially
+  mis-read it as one.
+- **Pico 1 only.** The Pico 2 showed nothing across the whole pass.
+
+**Decision**: record it now, fix before the next phase starts, and do not
+attribute it to Phase 5.2.
+
+**Rationale for the suspected root cause, stated as a hypothesis and not a
+finding**: `Psram::read` issues `pio_spi_write_read_dma_blocking` per 31-byte
+chunk (`psram.cpp:105`), and core 1's display service pushes the panel over
+**DMA** (`display.cpp:53`). The Pico 1 renders in 16-px strips — roughly twenty
+core-1 pushes per frame — where the Pico 2 pushes one full framebuffer. More
+concurrent DMA/SPI activity per unit of work on exactly the board that shows the
+defect. That is consistent with everything observed, but nothing here proves it;
+no test in this pass isolated concurrency.
+
+**Two candidate fixes, and why they are not the same fix**:
+
+1. **Bulk-read the display path** — have `format_list` stream the array the way
+   the compute path does instead of calling `get()` per element. Small, and it
+   is a large speedup regardless (999 SPI transactions become ~4). But if the
+   hypothesis above is right, this **narrows the window rather than closing it**,
+   and every other per-element `Array::get` on a PSRAM array keeps the exposure.
+2. **Fix `Psram::read`** — if it is DMA/SPI contention with core 1, the fix is
+   arbitration, and it is the real one. Bigger, and it needs the hypothesis
+   confirmed first.
+
+Doing (1) and calling the bug closed would be the tempting mistake: the symptom
+disappears from the one path that made it visible, while the cause stays.
+
+### Fix applied, 2026-08-09 — (1) only, and the bug stays open
+
+`format_list` now pulls real elements in blocks of 32 through `read_range`
+instead of one at a time through `get()`, into a **static** buffer rather than a
+local — destination-in-bss versus destination-on-the-stack is one of only two
+differences between the clean path and the broken one, so the fix mirrors the
+compute path exactly rather than inventing a third access pattern. It is also
+strictly faster.
+
+**Verified on the Pico 1: 0 corrupted in ~144 evaluations**, against 8/30 (27%)
+before, across every shape in the battery.
+
+**This does not close D53**, and the entry stays open deliberately:
+
+- The **root cause is still unknown**. The concurrency hypothesis above is
+  untested, and the observation that argues *against* it is that a 2 KB
+  `read_range` performs ~67 chunked PIO transfers to `get()`'s one, yet only
+  `get()` corrupts. Transfer count is not the variable; something about the
+  8-byte single-shot read, or its stack destination, is.
+- **~20 other `Array::get` call sites remain**, and any of them touching an
+  array past `kSlabBytes` carries the same exposure. They have simply never been
+  hammered 30 times in a row the way 5.2.12 hammered this one.
+- `format_matrix_impl` still reads cell-by-cell and is untouched.
+
+So: the reachable symptom is gone and the defect is not. Closing this needs the
+concurrency test, not another symptom fix.
+
+**What is and is not fixed, stated plainly** because "fixed" and "closed" are
+being used for different things above:
+
+| | state |
+|---|---|
+| `format_list` | **fixed**, 0 corrupted in ~144 runs against 8/30 before |
+| `format_matrix_impl` | **not fixed** — still per-element, `array_format.cpp:58/68/75` |
+| ~17 other `Array::get` call sites | **not fixed** |
+| root cause | **unknown** |
+
+### Follow-up probe, 2026-08-09: the exposure may be narrower than assumed
+
+`format_matrix_impl` was left untouched on the assumption it carries the same
+risk. **Probed, and it does not show the defect.** A 200x2 matrix — 400 elements,
+so past `kSlabBytes` and PSRAM-backed, built by `list2mat(l1,l2)` so the visible
+cells hold *varied* values rather than an identity matrix's zeros:
+
+| input | result |
+|---|---|
+| `list2mat(l1,l2)` displayed | 1 distinct in 30 |
+| `list2mat(l1,l2)->[G]` | 1 distinct in 30 |
+| `[G](3,1)`, `[G](7,2)` — single-element `get(r,c)` on PSRAM | 1 distinct in 30 each |
+
+Sensitivity is comparable to the test that caught the list case (~4-5 visible
+values, 30 reps, where lists showed 8/30), so this is not a null result for lack
+of looking. **It is still absence of evidence rather than proof** — matrices
+could have a lower per-read rate, and both display paths truncate, so only the
+first few values are ever sampled.
+
+**But it argues the fault is narrower than "per-element PSRAM reads are
+unreliable".** Something distinguishes the list result path from a stored
+matrix, and the two obvious candidates are that the list case reads a *freshly
+written temporary* while the matrix case reads settled storage, and that they
+reach PSRAM through different call shapes. That is a sharper question than the
+concurrency hypothesis and probably a cheaper one to answer.
+
+**Practical effect on priority**: the remaining call sites may not be at risk at
+all, which makes this lower-severity than the entry above implies — but nobody
+should treat that as established on 30 samples of one shape.
+
+### Investigation, 2026-08-09 (later): three locations eliminated, and it will not reproduce
+
+An attempt to close this outright. It did not succeed, but it moved the question
+a long way and the negative results are the useful part.
+
+**The fix is causal — the control that had never been run.** Reverting
+`format_list` to per-element reads on the current tree brings the fault straight
+back: **7/30 and 2/30**, with the *same* corrupt value. Block reads genuinely
+prevent it; the earlier 0-in-144 was not luck or drift.
+
+**Three of the four candidate locations are ruled out**, using folds a
+single-element error cannot hide (`sum(x)-expected`, never `sum(x)` alone — the
+mistake this entry already records):
+
+| candidate | test | result |
+|---|---|---|
+| the write path | `sum((l1*1)-l1)`, `(l1/1)`, `(l1+0)`, all 999 elements | **0/30 nonzero** |
+| the failing expression's stored data | `sum((l1/499500)*499500-l1)` | **0/30**, stable to the digit |
+| bulk read | `read_range` control in-firmware | **0/8000** |
+
+So the fault is in the **per-element read**, and nowhere else in the chain.
+
+**But it does not reproduce under direct instrumentation.** A temporary
+firmware diagnostic (`psramdiag`, six variants: settled reads, immediately after
+a bulk write, interleaved with writes elsewhere, spaced with a delay,
+`format_list` itself on a locally allocated array, and a bulk control) ran
+**40,000+ per-element PSRAM reads with zero failures** — including after driving
+heavy 999-element streaming first, to reproduce the state the real failure
+follows. Against roughly **2%** in the real path. **That is a ~1000x rate
+discrepancy, so the trigger is contextual rather than a random per-read fault**,
+and any theory that predicts a uniform per-read error rate is wrong. That
+includes the DMA/SPI-contention hypothesis above, which now looks unlikely.
+
+**The signature was misread the first time, and the correction matters.** This
+entry earlier described a partial transfer — "the low 4 bytes did not land". That
+came from comparing the bit patterns of the *derived numerator* (2.0 against
+2.0000018), which is a computed quantity, not the value the read returned.
+Comparing what was actually read — 4.004004004e-6 against 4.004007642e-6 — gives
+a **single-bit flip at mantissa bit ~32** (2^-20 relative), not a partial
+transfer. And the displayed values carry only 10 significant figures, so the low
+mantissa bytes are not recoverable from them at all: the earlier byte-lane
+reasoning was built on digits that were never there.
+
+**What is left, and it is now a narrow question.** The only difference not
+eliminated is **the array itself**: the diagnostic allocated a local
+`math::Array`, while the real case formats an evaluator temporary from the pool —
+a different PSRAM region, reached by a different allocation path. The next step
+is to log the failing temporary's `psram_addr_` and compare it against an
+address that reads cleanly, rather than to test the driver again.
+
+**Revisit when**: someone picks this up. Start from the address hypothesis, not
+from concurrency — 40,000 clean reads argue against the latter. The diagnostic
+was deliberately not committed (it is a throwaway that hangs a `psramdiag`
+command off `handle_command` under `PICOCALC_EVAL_PROBE`); rebuilding it is an
+hour, and the six variants above are the ones worth keeping.
+
+**Tradeoffs**: leaving it unfixed means a user can see a wrong digit in a long
+list on a Pico 1 — cosmetic, since the value is right and anything computed from
+it is right, but indistinguishable from a real arithmetic bug to whoever sees it.
+
+~~**Revisit when**: the concurrency hypothesis is tested…~~ — **superseded by the
+2026-08-09 investigation below**, which ran 40,000 per-element reads clean and
+makes a concurrency explanation unlikely. Start from the address hypothesis
+instead.
+
+## D52: Phase 5.2 on-device verification — §9's measurement method did not survive contact with the hardware
+
+**Date**: 2026-08-09
+**Status**: Accepted (measurement + method correction)
+**Context**: Task 5.2.12, both boards. §9 specified an A/B latency pass against a
+released binary, timed **host-side** as the round trip from writing a line to
+reading its echo, on the argument that "the same overhead sits on both sides, so
+enough repetitions cancel it."
+
+**That argument is wrong, and the hardware says so in two independent ways.**
+
+- **The round trip has a ~113 ms floor and an ~80 ms spread** (Pico 2). A submit
+  triggers a full-frame push — `main.cpp:398` says so: *"a full-frame push is
+  ~200 ms, so redraw only after input."* The evaluator's own cost is 0.5-17 ms
+  underneath that. The decisive observation is not the ratio but the ordering:
+  the 999-element M2 row had a **lower minimum (80 ms) than `2+3*4` (104 ms)**.
+  Scheduling phase dominates the work completely. And the push cost depends on
+  the *result being rendered*, so it is not overhead that cancels — it is
+  correlated with the thing under test.
+- **Timing the whole `submit_line` does not work either**, which was the obvious
+  next move and also wrong: it contains the SD history write
+  (`persist_history_line`). `2+3*4` measured **19.0 ms**, of which **0.63 ms**
+  was evaluation. 97% of the number was I/O.
+
+**Decision**: measure with a firmware probe bracketing evaluation only — top of
+`evaluate_input` to entry of `push_entry`, which every branch funnels through, so
+it captures evaluation plus result formatting and excludes I/O and rendering —
+and **rebuild the baseline from the v0.3.2 tag with the same probe**, applied to
+both trees by one script so the instrumentation is provably identical rather than
+hand-matched twice.
+
+**Rationale**: §9 chose a released binary to avoid a rebuild and to compare
+"what users have against what they will get". The second reason survives; the
+first cost more than it saved. And the rebuild strengthens the control rather
+than weakening it: v0.3.2 differs from `phase-5.2` **only** by the evaluator
+work, so M5's movement is genuinely dispatch overhead rather than the "different
+commit" confound §9 was guarding against.
+
+**Results** — evaluation time in ms, median of 15, per-sample spread 0.02-0.19 ms
+so every delta below is 10-100x its own noise. **Raw per-sample data and the full
+method are committed at
+[`docs/notes/measurements/phase5.2/`](measurements/phase5.2/README.md)** — cite
+that, not this summary, when closing the phase:
+
+| | input | Pico 2 base -> new | Pico 1 base -> new |
+|---|---|---|---|
+| M1 | `2+3*4` | 0.884 -> **0.627** (-29%) | 1.318 -> **0.899** (-32%) |
+| M1 | `sin(30)+ln(2)` | 1.487 -> **1.165** (-22%) | 2.090 -> **1.519** (-27%) |
+| M2 | `sin(l1)+2*l2` @999 | 10.889 -> **16.552** (+52%) | 28.552 -> **38.793** (+36%) |
+| M3 | `l1/sum(l1)` @999 | 8.457 -> **7.019** (-17%) | 13.850 -> **12.610** (-9%) |
+| M4 | `sum(sin(l3))` @256 | 2.116 -> **1.442** (-32%) | 5.851 -> **5.045** (-14%) |
+| M4 | `sum(sin(l4))` @257 | 3.412 -> **2.676** (-22%) | 7.658 -> **6.775** (-12%) |
+| M5 | `det([A])` 6x6 | 0.491 -> **0.637** (+0.146 ms) | 0.714 -> **0.895** (+0.181 ms) |
+| M5 | `[A]*[B]` 6x6 | 0.552 -> **0.634** (+0.082 ms) | 0.965 -> **1.055** (+0.090 ms) |
+| M6 | `seq(x^2,x,1,200,1)` | 1.851 -> **2.847** (+54%) | 3.821 -> **6.872** (+80%) |
+
+The Pico 1 column is the **re-take after D53's fix**, which is the committed
+dataset; the pre-fix run agreed within 0.02-0.05 ms on every row it captured, so
+the fix is timing-neutral even though it sits inside the probe window. It also
+fills M3, which the pre-fix run lost to the D53 defect itself — the stability
+guard rejected the row when the displayed answer changed between repetitions.
+
+**Against §9's own pass criteria**: M1 is not merely "within noise of today" but
+**better on both boards**, because REAL mode no longer evaluates twice — the
+`complexexpr` probe plus `engine` pair that register row D4 describes. M3
+confirms §3's reasoning about hoisting the loop-invariant reduction. M4 improves
+on both sides of the SRAM/PSRAM threshold.
+
+**M2 is the regression §3 committed to reporting either way, and it is the
+predicted one.** +5.66 ms over 999 elements is 5.7 us/element; two extra
+streaming passes x 8 KB x read+write at D10's measured ~6.8 MB/s predicts ~4.8 ms.
+The cost is the three-pass lift, not something unexplained. **M6 (+54%/+80%)** is
+the second regression: quoted-body re-entry against `listexpr`'s per-element
+tinyexpr compile.
+
+**A follow-up run pinned what actually drives both**, because M1-M6 could not
+separate "is a list" from "how many passes" — M2 is the only multi-source
+broadcast in that corpus. Holding size fixed at 999 elements and varying
+operation count: `2*l1` **-7%**, `sin(l1)` **-3%**, `l1+l2` **-13%**,
+`sin(l1)+l2` **+17%**, `sin(l1)+2*l2` **+36%**. **The driver is operation count,
+and the crossover is between one operation and two** — `l1+l2` builds a
+999-element list from two sources and is *faster*, so neither "is a list" nor
+source count explains it. In 5.2 the passes are **additive** (L4 ≈ L2 + L3,
+21.8 + 10.4 against 30.6 measured); `listexpr` **fused** them, so extra
+operations were nearly free.
+
+**And matrices are not a regression category at all.** Varying size instead:
+`det`'s overhead is **+0.192, +0.192, +0.191 ms at 10x10, 20x20 and 30x30** —
+constant to within 1 us across 27x the work, because it is the fixed cost of
+compiling a `Program`. M5's +15-30% is a small-matrix artifact: a 6x6 `det` is
+only ~0.5-0.9 ms, so a fixed 0.19 ms reads large. By 30x30 it is +1.6%.
+
+**M6 was apportioned by a third run**, varying element count with the body fixed
+and then body complexity with the count fixed. It is a **per-element** cost, flat
+from 100 to 999 elements, not `seq` setup — and it splits three ways: **~4.6
+us/element of fixed `run_body` re-entry** (visible at +32% with a trivial body),
+**~1.7x slower per operation** (per element per op, tinyexpr's compiled tree walk
+~9.8 us against the VM's ~16.8 us), and **~1.6 us/element of per-element PSRAM
+write** past 256 elements — the last being the only cheaply fixable part, and the
+same shape as D53.
+
+So the fair summary of this phase's performance is **"faster except when chaining
+two or more operations over a list, or evaluating one repeatedly"**. The two
+regressions have different causes and different prospects: **M2 is pass fusion**
+— what `listexpr` did structurally and the flat RPN program gave up, and nothing
+implicates the tagged-`Value` design or the stack machine — while **M6 is
+per-element interpretation cost**, which is the harder one. Data and full tables:
+[`measurements/phase5.2/`](measurements/phase5.2/README.md).
+
+**M5 moved and that is a cost, not an invalidation.** §9 itself says a
+difference there "means dispatch overhead, not arithmetic" — it is compiling a
+`Program` before running it. The first version of the comparison script failed
+the control on percentage alone, which on a 0.5 ms row is a statement about the
+divisor; it now judges absolute milliseconds.
+
+**Depth, which had never been tested on hardware.** The claim under test was that
+moving depth off the call stack makes it free, and the falsifiable form is that
+**stack peak must not grow with nesting depth**:
+
+- Scalar/paren/unary: **confirmed**. The ladder plateaued at 2,756 and depths 32
+  through 63 registered no new high-water mark at all. `kMaxStack = 64` is
+  enforced exactly — 64 evaluates, **65 returns "Too deeply nested"**, no fault.
+- **Matrix nesting is the exception: ~104 B of call stack per level.** Input
+  *length* is free (2 to 30 flat terms, zero new marks) and it is not the CAS
+  exact-form probe (`>dec` suppresses that; peaks still climb). Bounded in
+  practice — depth 14 is the deepest a 128-char line allows, at ~2,230 of 4,096 —
+  but the mechanism is unexplained and the blanket claim needs this caveat.
+
+**Before/after on the same boards**: paren nesting 16 -> 62+, matrix nesting
+**3 -> 14+**, worst stack peak **3,972 -> 2,344** (Pico 2) and **hard fault ->
+3,068** (Pico 1).
+
+**Footprint, in shipping configuration (probe off), and flash is the phase's
+third regression**: `.bss` **-5,092 B on both boards**, text **+1,960 B (Pico 1)
+/ +3,320 B (Pico 2)**. The first version of this entry reported only the RAM win,
+which was not the whole picture. Flash is board-dependent — the Pico 2 pays 1.7x
+the Pico 1 for the same source — and is **above the +1,500 B projected**. Both
+columns include D53's fix (+268 B bss); the evaluator's own RAM delta is
+**-5,360 B**.
+
+**Neither footprint figure matches the phase's own projection, and they miss in
+opposite directions** — `-6,888 B` of bss claimed against `-5,092` measured,
+`+1,500 B` of text against `+1,960`/`+3,320`. Both are recorded as measured
+rather than reconciled. v0.3.2 differs from the branch point only by D51, which
+has no static data, so the baseline choice explains neither gap. Whoever picks
+this up should find out which figure counted what before quoting either.
+
+**Two things §9 asked for that this pass did not deliver**: `.bss` "confirmed on
+the board" has no mechanism — the diag screen reports PSRAM, die temp, SD and
+keys, but no static-RAM figure, so the ELF number is the only one available (and
+is definitionally what was flashed). And M7's register replay ran clean on both
+boards (31 inputs, 36 lines, no faults) but was compared by eye against the
+register rather than diffed mechanically.
+
+**Revisit when**: M2 or M6 shows up as a felt slowdown in real use. Both are
+recorded costs, not blockers — the phase's case rests on correctness and bss.
+
+## D51: tinyexpr's unary minus binds to its own operand — the `(-2)^2` fix ships ahead of the unified evaluator, not with it
+
+**Date**: 2026-08-09
+**Status**: Accepted (bugfix)
+**Context**: Phase 5.2's differential harness found that the two shipped
+home-screen evaluators disagree about `(-2)^2` — **-4** from tinyexpr, **4** from
+`complexexpr` — so today's answer depends on the number mode. **D50** (on branch
+`phase-5.2`, not yet merged) scoped the fix out of that phase deliberately,
+because the defect is upstream in the vendored parser and patching it *there*
+fixes graphing, tables, stats and the solver as well, where 5.2 alone fixes only
+the home screen.
+
+That is also why it ships first. The unified evaluator has no hardware
+verification yet (5.2.12 is the only task left in that phase) and may not land on
+schedule; a wrong arithmetic answer in `evaluate_real()` should not be gated on
+it. This is the third instance of the same disagreement class after **D46** and
+**D50**, and the first one fixed at the source.
+
+**Two defects, one mistake.** Both are in `drivers/tinyexpr/tinyexpr.c`'s
+`#ifdef TE_POW_FROM_RIGHT` build of `factor()` — the branch we compile
+(`CMakeLists.txt:62`) — and both come from letting a negation and a `^` swap
+places.
+
+*B1 — a parenthesised negation was hoisted out of the power.* `factor()` called
+`power()` (which scans leading signs), then stripped any `negate` node off the
+top and re-applied it after the `^` chain. By then `-2` and `(-2)` are the **same
+node**: the parentheses are gone, so nothing distinguishes the negation the user
+grouped from the one they did not. Upstream reports the same defect as
+[issue #52](https://github.com/codeplea/tinyexpr/issues/52), `(-1)^0 == -1`.
+
+*B2 — a negated exponent was re-based.* The right-associative insertion loop took
+`insertion->parameters[1]` as the base of the next `^`. When that slot held a
+`negate` node it descended *through* the negation, so `2^-3^2` built
+`2^((-3)^2)` = 512 instead of `2^(-(3^2))` = 0.001953125.
+
+**Neither was pinned by a test, and the reason is worth keeping.** `(-2)^3` = -8
+and `(0-2)^2` = 4 come out right *by accident* — an odd exponent absorbs the
+misplaced sign, and the second spelling never reaches the hoist. The suite
+happened to sample the accidents.
+
+**Decision**: restate the grammar so the sign is scanned in `factor()` at each
+level, and build the chain through an insertion point so a negation always stays
+**outside** the sub-chain it introduced:
+
+```
+<factor> = {("-" | "+")} <base> {"^" <factor>}
+
+-2^2    ->  -(2^2)      = -4    (TI convention, unchanged)
+(-2)^2  ->  (-2)^2      =  4    (was -4)
+2^-3^2  ->  2^(-(3^2))          (was 2^((-3)^2) = 512)
+2^2^3   ->  2^(2^3)     = 256   (right-associative, unchanged)
+```
+
+**Rationale — why iterative and not recursive.** The short fix is to make
+`factor()` recurse on `^`, which is four lines and obviously correct. It was
+rejected: it costs a stack frame per caret, and a `^` chain carries **no
+parentheses**, so `Engine`'s only depth guard — `too_deeply_nested()`
+(`engine.cpp:262`), a paren-count pre-scan capped at 7 — cannot see it. `2^2^2^…`
+would recurse unbounded against core 0's 4 KB. That is D45/D47/D48's failure mode
+exactly, and this project has now paid for it four times; a bugfix is not the
+place to reintroduce it. The insertion-point form keeps `factor()`'s frame flat,
+and a 500-caret chain parses without incident.
+
+**This is a local fix to a vendored driver**, the first one, so `drivers/README.md`
+gains the "Local modifications" section its own policy has been reserving. A
+re-vendor must re-apply it — or, per the correction below, adopt upstream's.
+
+**Verified before/after on the same Pico 2**, by flashing each build and
+replaying one 32-expression corpus through Phase 5.1's serial injection —
+which is what that tooling was built for. In REAL mode (the tinyexpr path),
+14 rows flip and every "must not move" row is byte-identical:
+
+| Input | before | after |
+|---|---|---|
+| `(-2)^2` | -4 | **4** |
+| `(-1)^0` | -1 | **1** |
+| `sqrt((-2)^2)` | NaN | **2** |
+| `(-3)^2+1` | -8 | **10** |
+| `2^-3^2` | 512 | **1/512** |
+| `-2^2`, `-3^2`, `2^3^2`, `2^2^3`, `(0-2)^2`, `-2^2^2`, `3--2` | | *unchanged* |
+
+`seq((-2)^n,n,1,4,1)` covers the **compiled** path — the same
+`Engine::compile`/`eval_compiled` API graphing and tables use — and goes
+`{-2,-4,-8,-16}` → `{-2,4,-8,16}`, while `seq(-2^n,…)` stays `{-2,-4,-8,-16}`.
+The two are now distinguishable, which they were not.
+
+**Tradeoffs**: two inputs lose a plausible-looking answer, and both are the bug's
+other half rather than a new regression.
+
+- `(-2)^0.5` was `-1.4142` — that is `-(2^0.5)`, not a root of -2. It is NaN now,
+  which is what a real evaluator has to say. On the home screen nothing changes
+  (the REAL-mode gate already answered "Non-real result", because the mode probe
+  runs `complexexpr`); on graphing the point simply goes undefined.
+- `(-8)^(1/3)` was `-2`, the real cube root, arrived at by accident. It is NaN
+  now. TI-84 agrees (`ERR:NONREAL ANS` in REAL mode) and `a+bi` mode still gives
+  the principal complex root, but there is **no `cbrt` in the catalog**, so REAL
+  mode has no spelling for a negative cube root. Recorded here so a bench session
+  does not rediscover it as a regression.
+
+A third effect is an improvement worth naming: `exact.cpp`'s gate 5 requires the
+CAS result and the numeric result to agree to 1e-9. They disagreed on these
+inputs, so exact forms were silently suppressed — `1/(-2)^2` displayed `-0.25`
+where it now displays an amber `1/4`.
+
+**Revisit when**: upstream tinyexpr fixes #52 and we re-vendor — port their fix
+if it is equivalent, keep ours if it is not. The larger question, whether the
+unified evaluator should replace tinyexpr on the numeric path outright, is
+unaffected and stays where D50 left it: after 5.2 closes, with §9's M1 measured.
+
+### Correction, 2026-08-09: upstream had already fixed it, four days earlier
+
+**This entry twice said upstream #52 was open. It was not** — it was closed
+**2026-08-05**, and the claim came from a web search taken at face value instead
+of the two API calls that would have checked it. Only the narrow reading
+survives: the bug is present in our vendored `4a7456e` (2025-12-12), which
+predates the fix. Corrected here rather than quietly, because the wrong version
+sends the next reader looking for work that no longer exists.
+
+**What actually happened.** tinyexpr had been dormant for years; #52 was filed in
+July 2019, diagnosed correctly by the maintainer within a day — *"it will
+optimize `(-1)^0` to `-1^0` to `-(1^0)`, which is very wrong"* — and then sat.
+The same 2019 comment predicted the second defect before anyone hit it: *"there
+are probably other cases such as `-a^-b^-c` that need special consideration."*
+On 2026-08-05 the project woke up and landed 22 commits, including
+[`1e2ba48`](https://github.com/codeplea/tinyexpr/commit/1e2ba481) "Fix unary
+operator handling with TE_POW_FROM_RIGHT, fixes #52".
+
+**Their fix covers both defects and is equivalent to ours**, reached by a
+different route. They keep the sign scan in `power()` and record it in a new
+`state::applied_unary` flag, so `factor()` hoists only a unary operator actually
+written to the left of a `^`; we moved the scan into `factor()` instead. For B2
+they move the insertion slot inside the unary node
+(`slot = p_unary ? &p->parameters[0] : &insert->parameters[1]`), which is the
+same tree ours builds. Both are iterative — nobody reintroduced recursion per
+caret. Verified rather than assumed: our 46-expression corpus runs against
+upstream `master` with **0 failures**, and their `smoke.c` re-enables a
+`/* TODO POW FROM RIGHT IS STILL BUGGY */` block that had been commented out
+since 2020, containing `2^-3^4` and `-2^-3^-4`.
+
+**So nothing goes upstream.** No issue to file, no fix to contribute; a duplicate
+would be noise. The good-citizen move is the opposite one — stop carrying a
+private fork of a fix that now exists upstream.
+
+**The follow-up is a re-vendor, and `drivers/README.md`'s policy already decides
+it**: "port their fix if it is equivalent" — it is. But `master` is **22 commits
+ahead** and not a drop-in, so this is scoped work rather than a drive-by:
+
+- It merged the **logic branch**, so `!` is now prefix logical-not with its own
+  `logical_not`/`notnot` node types. We use `!` as *postfix factorial*.
+  `Engine::preprocess` rewrites every `!` to `fac(...)` before tinyexpr sees one,
+  so the collision is contained today — but that containment becomes
+  load-bearing rather than incidental, and `!=` would now mean something.
+- [`a851f2b`](https://github.com/codeplea/tinyexpr/commit/a851f2be) **"Limit
+  parser recursion depth, fixes #136"** — that is **D47's bug**, fixed upstream.
+  Our `kMaxParseDepth = 7` paren-count pre-scan in `engine.cpp` is a workaround
+  outside the parser; theirs is inside it and counts what actually recurses.
+  Adopting it could retire ours.
+- Plus locale-independent number parsing, `unsigned char` ctype fixes, ARMCC
+  support, and a CI workflow.
+
+Until that happens our local fix stands and the "Local modifications" row is
+still correct — it just has a shorter expected life than it looked like.
+
+## D50: tinyexpr stays on the numeric path — its `(-2)^2` bug is a separate bugfix, and replacing it outright is a post-5.2 question
+
+**Date**: 2026-08-09
+**Status**: Accepted (scoping)
+**Context**: Phase 5.2's differential harness (task 5.2.9) found that the two
+shipped home-screen evaluators **disagree today**: `(-2)^2` is `-4` from
+tinyexpr and `4` from `complexexpr`, so the answer depends on the number mode
+or on whether the expression happens to mention `i`. The cause is upstream, in
+`drivers/tinyexpr/tinyexpr.c`'s `TE_POW_FROM_RIGHT` build of `factor()`, which
+hoists a negation out of a power without knowing whether parentheses closed it —
+by then `(-2)` is just a `negate` node, indistinguishable from `-2`. `(0-2)^2`
+gives `4` on both paths.
+
+This is the second instance of the class that justified Phase 5.2 (D46 was the
+first), and it raised the obvious follow-on: if the unified evaluator gets this
+right, should it replace tinyexpr everywhere rather than only on the home
+screen?
+
+**Decision**: Three parts.
+
+1. **The unified evaluator stays home-screen-only for 5.2**, as
+   `phase4-spec.md` §5.2 requires. Graphing, tables, stats and the solver keep
+   `evaluate_real()`.
+2. **The `(-2)^2` fix is a separate bugfix**, taken outside 5.2 and not gated on
+   it. It is ~5 lines in the vendored parser and parse-time only.
+3. **"Replace tinyexpr entirely" is revisited after 5.2 closes**, with §9's
+   measured per-sample numbers in hand (spec P5.2-7).
+
+**Rationale**: The guardrail's stated reason no longer applies, and saying so
+matters: §5.2 argued that "making the default numeric path complex would double
+arithmetic cost", which describes the design 4C considered — a `Complex` value
+type — not this evaluator, where real ⊕ real never touches complex arithmetic.
+So the original argument does not transfer. Four other costs do, and they are
+the real ones:
+
+- **A `Program` is a fixed 2,064 B**; a tinyexpr tree is malloc'd and
+  proportional to the expression (~120 B for `sin(x)+2*x`). Today's graph screen
+  compiles → sweeps → frees one at a time and would survive, but caching Y1-Y7
+  compiled would cost 7 x 2,064 = 14.4 KB against ~1 KB — more than the phase's
+  whole bss win.
+- **`compile()` and `run()` are non-reentrant singletons**, safe only because
+  nothing on the home screen re-enters them. The numeric path does
+  (`list_ops.cpp:290` compiles inside an evaluation; `eval_field` reaches the
+  engine at the leaf of another parser's recursion).
+- **The scratch-arena invariant**: the evaluator's chunk staging overlays
+  `scratch::kCompute`, whose other owners are `stats`, `matrix` and `infer`.
+  They cannot collide today only because the evaluator is home-screen-only.
+- **No differential coverage off the home screen.** The 5.2.9 harness and the
+  change register cover home-screen expressions; graphing, tables and stats have
+  no corpus, so every plotted curve would become an unverified regression
+  surface. 5.2.9 found three bugs inside *covered* territory.
+
+Measured, for whoever picks this up:
+
+| | tinyexpr | unified evaluator |
+|---|---|---|
+| text | 7,897 B | 30,734 B (both TUs) |
+| bss | 0 (heap trees) | 2,442 B + 2,064 per live `Program` |
+
+Splitting the bugfix out is what lets the correctness win land without any of
+that: patched at the source it fixes the home screen *and* graphing, where 5.2
+alone fixes only the home screen.
+
+**Tradeoffs**: Until the bugfix lands, 5.2 trades a home-screen disagreement
+(REAL vs RECT) for a home-vs-graph one — `(-2)^2` will read `4` on the home
+screen while `Y1=(-2)^X` still plots the tinyexpr reading. That is a smaller and
+more visible inconsistency than the current one, but it is a real regression in
+kind and is recorded rather than glossed. Deferring the replacement question
+also means the project keeps two evaluators, and with them the possibility of a
+third D46.
+
+**Revisit when**: 5.2 closes and §9's M1 has measured per-sample latency for the
+stack machine against tinyexpr. That number is the one input the decision needs
+and nobody has it yet — the honest answer to "faster or slower" today is that
+it is unknown.
+
+### Amendment, 2026-08-09: the missing input exists, and it argues against replacing
+
+**5.2.12's M6 apportionment supplies the number this clause was waiting for**,
+and from a better angle than M1. `listops::seq` — the path M6 compares against —
+**compiles once and evaluates many**, which is the shape of the graphing hot loop;
+M1 measures one-shot entry, which is not.
+
+M1 and M6 point in **opposite directions**, and the distinction is the whole
+answer. One-shot scalar entry is **22-32% faster** under the unified evaluator,
+because it removes the REAL-mode double evaluation. **Repeated** scalar
+evaluation is **~1.7x slower per operation** (per element per op: tinyexpr ~9.8
+us, the VM ~16.8 us) with a further **~4.6 us/element of fixed re-entry**. The
+home screen evaluates once per keypress; graphing evaluates hundreds of times per
+redraw. So the measurement supports **exactly the split that already exists** —
+unified on the home screen, tinyexpr on the numeric path — rather than the
+replacement.
+
+Two caveats, so this is not over-read: `seq`'s per-element loop is the closest
+analogue to graphing, not the same code, and **nothing was profiled** — why the
+VM costs more per operation than a tree walk is unknown, so the gap is not
+established as irreducible. Full data: `measurements/phase5.2/README.md`.
+
+#### What it would actually cost, projected onto the workload
+
+**M2 does not transfer, and should not be counted here.** It is the *list* tier —
+multi-operand broadcasting with additive streaming passes. `evaluate_real()` is
+**scalar-only**; tinyexpr has no list broadcasting to regress, and the list tier
+stays home-screen-only either way. **M6 is the entire question.**
+
+Every numeric-path consumer is compile-once-evaluate-many, which is M6's exact
+shape: `FunctionSource` (`eval_compiled` per pixel column), `TableModel` (per
+row), `numeric_solve` (per iteration), and `fnInt` (thousands per integral).
+Per-element scalar evaluation, Pico 1, from M6's body ladder at N=200 — SRAM, so
+no PSRAM-write component muddying it:
+
+| body | ops | tinyexpr | VM | ratio | 320-point redraw |
+|---|---|---|---|---|---|
+| `x` | 0 | 14.2 us | 18.8 | 1.32x | 4.6 -> 6.0 ms |
+| `x^2` | 1 | 19.1 | 34.4 | **1.80x** | 6.1 -> 11.0 ms |
+| `sin(x)+x^2` | 3 | 38.7 | 68.0 | **1.76x** | 12.4 -> **21.8 ms** |
+| `sin(x)+cos(x)+x^2` | 5 | 54.5 | 94.6 | **1.74x** | 17.4 -> **30.3 ms** |
+
+**~1.75x on the evaluation phase of everything tinyexpr serves.** Seven Y= slots
+at three operations: **86.6 -> 152.3 ms per redraw, +66 ms.**
+
+**And it lands on the one screen already known to be the bottleneck.** A heavy
+Pico 1 redraw measured 1.17 s, and **D10 leg B exists specifically to
+parallelise `recompute_function`** because it is compute-bound. Making it 1.75x
+slower runs directly against work already queued to make it faster.
+
+**Two objections that do *not* apply**, recorded so they are not re-raised:
+
+- **Flash improves.** Retiring tinyexpr returns 7,897 B against the +1,960
+  (Pico 1) / +3,320 (Pico 2) this phase spent — net **-4.5 to -6 KB**.
+- **This entry's own 14.4 KB RAM figure is avoidable.** It assumed caching Y1-Y7
+  compiled (7 x 2,064 B). Nothing requires that: M5 measures compile at a fixed
+  ~0.19 ms against ~12 ms of evaluation per redraw, so compile-per-redraw is
+  comfortably affordable. The *opposite* nuance has strengthened, though — the
+  phase's real bss win is **-5,092 B**, not the projected -6,888, so there is
+  less headroom than this entry assumed if anyone did want caching.
+
+**What would have to change first.** The gap is two costs with different
+prospects: a **~4.6 us fixed per-call re-entry** (the 1.32x on a trivial body),
+which is VM entry/exit and plausibly attackable on its own, and the **~1.7x
+per-operation rate**, which is the interpreter design — flat RPN with switch
+dispatch against tinyexpr's direct tree walk through function pointers. Profile
+before assuming either is fixed.
+
+As it stands the trade is a 7,897 B flash win and one-parser tidiness against a
+**1.75x slowdown on the most latency-visible screen in the product**. That is the
+wrong way round, and it is the same conclusion the paragraph above reaches from
+the other direction.
+
+**Amendment, 2026-08-09 (same day): part 2 is discharged — see D51.** The bugfix
+was taken immediately rather than left on the wishlist, on `main` and released as
+**v0.3.2**, so it is in the shipping firmware whether or not 5.2 ever closes.
+Two consequences for this entry:
+
+- **The tradeoff above no longer applies.** `(-2)^2` reads 4 on the home screen
+  *and* plots as 4; the home-vs-graph inconsistency this decision accepted as the
+  price of splitting never actually shipped, because the split half landed first.
+- **The scoping argument held up, and stronger than written.** "~5 lines,
+  parse-time only" was wrong about the size — patching at the source turned up a
+  *second* defect in the same function (`2^-3^2` = 512), which 5.2 would not have
+  fixed anywhere, because the unified evaluator gets that case right and nobody
+  was comparing on it. Splitting the fix out is what made the vendored parser get
+  looked at at all.
+
+Parts 1 and 3 are unchanged: the unified evaluator stays home-screen-only for
+5.2, and replacing tinyexpr outright still waits on §9's M1.
+
+## D49: Integer powers of a complex base are computed, not approximated — and why the display-tolerance alternative was rejected
+
+**Date**: 2026-08-09
+**Status**: Accepted (bugfix)
+**Context**: Found by Phase 5.1's serial injection on its first real sweep, which
+is the point of that tooling. `(1+i)^2` displayed `1.224646799e-16 + 2i` where it
+should be `2i`. Not a display artifact: `real((1+i)^2)` returned the epsilon and
+`(1+i)^2-2i` propagated it.
+
+`c_pow` had exactly one exactness branch — real base, real exponent, `std::pow`,
+added by **D46** for the same class of defect (`10202^2` a hair off 104080804).
+A **complex** base fell through to `c_exp(c_ln(base) * exp)`, which cannot
+produce an exact zero component: `1.2246e-16` is precisely `2*cos(pi/2)` in
+double. Confirmed against CPython, which reproduces our wrong answer bit for bit
+via `cmath.exp(2*cmath.log(1+1j))` while `(1+1j)**2` gives exactly `2j` — it
+special-cases small integer exponents for this reason.
+
+The test suite did not catch it, and *why* is worth keeping:
+`test_complex.cpp:82` already asserted `(1+i)^2 == 2i`, but with `tol = 1e-9`.
+The assertion was right; the tolerance could not distinguish an exact zero from a
+1e-16 one. **A tolerance chosen for "close enough" cannot test exactness.**
+
+**Decision**: binary exponentiation for a real, integer-valued exponent of
+magnitude <= 100, mirroring D46's real-base branch. `(1+i)^2` is now exactly
+`2i` as a *value*. New tests assert with `tol = 0`, because exactness is the
+property under test.
+
+**Rationale — two architectural camps, and why camp 1.**
+
+*Camp 1, never generate the epsilon* (adopted): compute integer powers by
+repeated multiplication. What CPython and most numeric libraries do. True CAS
+systems (Mathematica, Maple, TI-Nspire CAS, HP Prime CAS) reach the same place by
+a different route — they expand `(1+i)^2` **symbolically** to `1 + 2i + i^2`, so
+no float is involved and exactness is structural.
+
+*Camp 2, suppress at display* (rejected here, recorded below): leave the value
+and widen the formatter's zero test.
+
+Camp 2 was rejected because **it does not fix the value**. `real()` and ordinary
+arithmetic both observe the component, so snapping only at format time would have
+printed `2i` while `real((1+i)^2)` still returned `1.2e-16` — a worse
+inconsistency than the original, because the display would then be lying about a
+number the user can still extract.
+
+**Camp 2, recorded for if this ever becomes an issue.** Camp 1 has a real limit:
+it only helps where an exact algorithm exists. `(1+i)^2.5`, `(1+i)^i`, and
+transcendental compositions that *should* yield an exact zero still go through
+`exp(ln)` and can still show an epsilon. No camp-1 system avoids that. If those
+paths start producing user-visible artifacts, camp 2 is the remaining lever, and
+these are the notes for doing it properly:
+
+- **The formatter is already asymmetric about zero, and that is the bug camp 2
+  would fix.** `format.cpp:184` tests `z.is_real()`, which is *tolerant*
+  (`eps = 1e-12`), so a negligible imaginary part is snapped away and `(1+i)^4`
+  printed a clean `-4` even before this fix. `format.cpp:203` tests
+  `z.re == 0.0`, which is *exact*, so a negligible real part survived. One axis
+  forgiving, the other not.
+- **Use a relative test, not an absolute one.** `is_real(1e-12)` is scale-blind:
+  for a result of magnitude 1e13 an imaginary part of 1e-11 is relatively
+  negligible but absolutely above eps, and at magnitude 1e-13 everything looks
+  real. The principled form is `|re| <= eps * |z|`.
+- **It changes behaviour, not just presentation.** A genuine `1e-15 + 2i` would
+  display as `2i`. That is the same trade the imaginary axis already makes, newly
+  applied to the real one — defensible, but it is a decision about lying to the
+  user in a documented way, not a cleanup.
+- Apply it at *display* only. Do not let a tolerance leak into `real()`,
+  `imag()`, comparisons or arithmetic, or the inconsistency simply moves.
+
+**Tradeoffs**: a cap at |n| <= 100 (CPython draws the same line); beyond it the
+`exp(ln)` path takes over and the result is correct but not bit-exact — pinned by
+a test so the fallback is not accidentally removed. Repeated squaring costs
+O(log n) multiplications, negligible on this path.
+
+**Revisit when**: an epsilon artifact appears from a path camp 1 cannot reach
+(non-integer or complex exponents, transcendental compositions). Then implement
+camp 2 per the notes above rather than re-deriving them.
+
+**User-facing documentation**: this belongs in the user docs, not only here —
+the distinction between results that are *exact by construction* and results that
+are *numerically approximated* is something a calculator user should be told
+plainly, along with the honest statement that `(1+i)^2` is exact while
+`(1+i)^2.5` is not, and why. Flagged for the `docs/site` branch's CAS/complex
+chapter.
+
+---
+
+## D48: `matexpr` gets the depth cap it never had — and the margin it leaves makes idea F worth doing
+
+**Date**: 2026-08-08
+**Status**: Accepted (bugfix; containment, with a named follow-up)
+**Context**: The post-D47 group-5 bench sweep on the Pico 1 (stack guards live)
+walked every heavy path with `stack: peak` on serial. Four of five were clean —
+idle 1,540, graph redraw + zoom 2,360, and the list editor / 1-Var stats /
+inference set never registered a new high-water mark at all (the first hardware
+confirmation of D47's `eval_list_into` rework). The D45 ladder in both REAL and
+a+bi reached 3,588, which turned out to be *by design*: D45's static prediction
+for the home-screen entry at cap 7 was 3,728 with 368 margin, so the live mark
+agreed with frame arithmetic derived by inspection to within ~140 B.
+
+Matrix was not clean. `det(([a]*([c]+[d]))+[d])` hard-faulted, reproducibly.
+The fault record's `pc`/`lr` were garbage (both resolve to `??`) because the
+overflow corrupted exception stacking, but `sp=0x20040ff8` named it alone: 8
+bytes below core 0's `__StackBottom` (`0x20041000`), i.e. SP had crossed its own
+floor into core 1's stack. `matexpr` was the last parser with no depth cap —
+D45 capped the CAS parser, D47 capped tinyexpr and complexexpr, and three of
+those four were found by something crashing.
+
+**Decision**: `kMaxParseDepth = 3` in `mat_expr.hpp`, enforced by an RAII
+`DepthGuard` in `parse_unary` — the single point every level of the
+`parse_expr -> parse_term -> parse_unary -> parse_power` cycle passes through
+exactly once. RAII because `parse_term`/`parse_expr` call `parse_unary` in a
+loop and siblings must not accumulate; three host tests pin that specifically,
+since a naive increment-without-unwind passes every depth test and breaks flat
+expressions. One production entry point (`home_screen.cpp`) means one constant,
+unlike complexexpr's split cap.
+
+**Rationale**: 3 is forced from both sides, and only measurement found the
+boundary. A first attempt at 2 — derived from frame arithmetic (1,028 prefix +
+848 entry + 808/level, predicting depth 3 at 4,300 and therefore unreachable) —
+broke two shipped behaviours that `test_matrix` already pinned:
+`det(identity(2))` and matrix literals inside a function argument are both
+depth 3, because `parse_matrix_fn` and `parse_matrix_literal` each re-enter
+`parse_expr`. On hardware depth 3 turned out to *fit*: 3,940 of 4,096. The
+arithmetic was 360 B pessimistic — the four frames are not all live at once —
+and had it been trusted, the cap would have shipped one level too tight.
+Repeating D47's lesson exactly: measure, don't reason about frame sizes.
+
+Measured on the Pico 1 (`stack: peak` high-water marks, 4,096 total):
+
+| | before | after |
+|---|---|---|
+| `det([A]*[B]+[C])` (depth 2) | 3,492 | — |
+| `det([[1,2][3,4]])` (depth 3) | 3,940 | **4,012** |
+| `det(identity(2))` (depth 3) | — | 3,540 |
+| `det(([a]*([c]+[d]))+[d])` (depth 4) | **hard fault** | "Too deeply nested" |
+
+**Tradeoffs**: The guard costs stack. `P` gained `depth` and every level carries
+a `DepthGuard`: the Pico 1 cycle went 808 -> 832 B/level, +24 B/level, which
+over three levels is the +72 B seen live (3,940 -> 4,012). The static tooling
+and the hardware mark agree exactly here, which is worth noting after a session
+in which frame arithmetic was wrong twice. **So the fix converted a reachable
+hard fault into an error message while shrinking the surviving margin from 156 B
+to 84 B.** That is strictly better than faulting and it is not comfortable:
+depth 3 is now something to defend, not build on. Expressions a user could
+reasonably write (`det(([A]+[B])*[C])` is depth 3 and fine; anything one level
+deeper) are now rejected.
+
+The Pico 2 is not better off. Same 4 KB core-0 stack (`0x20081000`-`0x20082000`)
+with core 1 immediately below, identical layout to the Pico 1 — the RP2350's
+extra SRAM does not reach the stack, which lives in a 4 KB scratch bank on both
+chips. Its frames are ~8% cheaper (cycle 768 vs 832), worth ~290 B of headroom
+at depth 3 against the ~768 B a whole extra level costs. So one constant serves
+both boards; no board-conditional cap.
+
+**PSRAM cannot help.** It is 8 MB of PIO-driven SPI and *not memory mapped*
+(`psram.hpp`: `alloc()` returns offsets, access goes through `read()`/`write()`),
+so there is no address a stack could target — on either board, since both use
+the PIO driver rather than the RP2350's native QMI mapping. At ~200 us/KB it
+would be unusable for a call stack regardless.
+
+**Amendment, same day — the cap alone was not enough, and the Pico 2 proved
+it.** Flashed to the Pico 2 (first time on this branch) and `det([[1,2][3,4]])`
+and `det(identity(2))` — both depth 3, both *allowed* by the cap — hard-faulted,
+while `det([a]*[c]+[d])` was fine. This board's fault reporter gave a real PC
+where the Pico 1's had given garbage: `parse_power`'s prologue
+(`mat_expr.cpp:625`) called from `parse_unary`, `sp = __StackBottom + 160`.
+
+The discriminator is a **numeric literal at maximum depth**. `parse_scalar_span`
+put a `char span[256]` on the stack and handed it to `eval_field` -> the whole
+tinyexpr engine (`Engine::compile`/`compile_with`, 280/288 B each) — at the
+*leaf* of the recursion, i.e. the deepest point on the stack. **This is D47's
+bug verbatim**: `a0939bf` fixed exactly it in `complexexpr`, but `matexpr` has
+its own copy of that function and never received the fix.
+
+Fixed the same way: `strtod` for a plain literal (what tinyexpr would have used
+anyway), and `span` becomes `static` — non-reentrant by the same argument, since
+`parse_scalar_span` consumes a terminal span and neither `eval_field` nor
+`complexexpr::evaluate` re-enters this parser. **Cycle 832 -> 600 B/level
+(Pico 1) and 768 -> 536 (Pico 2), -232 on both, for +256 B of `.bss`** (211,100
+-> 211,356). Pico 2 re-verified: all five expressions correct, no fault, worst
+case **3,860 of 4,096 (236 margin)**.
+
+Two corrections to the entry above. First, the Pico 2 is *not* simply better
+off — it faulted where the Pico 1 survived, despite every statically-reported
+frame being smaller and its idle baseline 304 B lower. Second, part of why:
+**`size-report.sh` does not count FP register saves.** The Pico 1 image has zero
+`vpush` instructions; the Pico 2 has 19, including inside `math::eval_field` on
+the crash path. Every Pico 2 frame figure in this entry is therefore low by an
+unquantified amount, and the tool should be taught to count `vpush`.
+
+The Pico 1 has not been re-measured since the leaf fix — board swaps are batched
+to stage closures — and does not need to be for safety: **the leaf fix only ever
+removes stack from this path**, and the Pico 1 was already passing at 4,012
+without faulting, so it can only improve. The 4,012 figure is stale; the safety
+argument is not.
+
+**Method note worth keeping.** Three separate attempts this session to derive a
+peak from frame sizes were wrong, always optimistic: depth 3 predicted
+unreachable (it fit, 360 B error), the Pico 2 predicted ~3,500 (it crashed), and
+the post-fix Pico 2 predicted ~3,300 (measured 3,860, 560 B error). Static frame
+sums bound a *single* frame; they are not a model of a peak. Prefer measurement,
+and where a board isn't available prefer **monotonic arguments** ("this can only
+remove stack") over predictions.
+
+**Revisit when**: depth 3 proves too restrictive in real use, or anything on
+this path grows a frame. Note the cap was sized against the *old* 832 B/level
+frames and may now be conservative — but raising it needs a measurement pass on
+both boards, not arithmetic. Three levers, cheapest first: (a) frame reduction —
+`parse_power` alone is 388-416 B holding matrix temporaries, cf. D47's
+`eval_list_into` at 2,248 -> 32 B, worth maybe 2-3x the depth; (b) move core 0's
+stack out of the scratch bank into main SRAM via the linker script — raises the
+ceiling without touching frames, comfortable on the Pico 2 and tight on the
+Pico 1's ~52 KB headroom, a whole-firmware change of the same class as
+`PICO_USE_STACK_GUARDS`; (c) an explicit-stack iterative parser, whose depth is
+bounded by an array rather than by frames — and that array *is* PSRAM-friendly,
+being accessed sequentially rather than as a call stack.
+
+### Amendment, 2026-08-09: the cap does not hold on the Pico 1, and it never did
+
+**5.2.12's Pico 1 leg (D52) hard-faulted the shipped v0.3.2 firmware** on
+`det((([A]*[A])+[A])*[A])` — depth 4, which this decision says is rejected. It is
+not rejected on that board; the device reboots. `lr` resolves to
+`matexpr::parse_unary` (`mat_expr.cpp:769`, *this entry's own guarded function*)
+with `sp = 0x20040f60`, **160 bytes below `__StackBottom` (0x20041000)** and
+inside core 1's stack.
+
+**The reason is structural, and it is visible in this entry's own numbers.**
+`DepthGuard` is RAII *inside* `parse_unary`, so entering depth 4 allocates the
+frame **before** the guard can refuse it. This entry measured 600 B/level after
+the leaf fix and recorded "the margin at depth 3 is now 84 bytes — containment,
+not a fix". Re-measured now, `det([[1,2][3,4]])` peaks at **3,952 of 4,096**:
+144 bytes of margin, against a ~600 B frame. The guard is one frame too late,
+and always was.
+
+The Pico 2 survives the identical input on identical code only because its frames
+are smaller (536 B/level) and its baseline peak lower — which is why 2026-08-08's
+Pico-1-then-Pico-2 sequence never caught it. **A cap that must allocate the frame
+it is rejecting cannot protect the last level.** Checking the depth *before* the
+recursive call, at each call site, is the shape that would have worked.
+
+**Not fixed here, and that is a choice with a cost**: `matexpr` is deleted by
+Phase 5.2, which handles the same input correctly at a 2,104 peak, so fixing it
+would be work thrown away. But **v0.3.2 is the current release and every release
+back to v0.2.0 carries this**, so until 5.2 merges there is a reachable
+hard-fault on the Pico 1 — a plain matrix expression a user could type. If 5.2
+slips, this needs a point fix on `main` rather than continued waiting; see the
+wishlist entry.
+
+**And the PSRAM sentence above oversold what got built.** 5.2 put the operand
+stack in **bss** — `unified_vm.cpp:39`, 64 x 24 = 1,536 B, with the comment
+saying exactly why — not in PSRAM. PSRAM was never needed: an explicit stack made
+depth cheap enough that 1.5 KB of SRAM bought 64 levels against `matexpr`'s 3.
+The claim that the array "*is* PSRAM-friendly" remains true and remains
+unexercised.
+
+**(c) belongs to idea F, not to `matexpr`** (decision 2026-08-08): the unified
+evaluator retires this parser outright, so building an explicit-stack rewrite
+here would be thrown away. F's case is now two independent arguments, not one —
+D46's correctness argument (the real and complex evaluators silently disagreed
+about DEGREE-mode trig since Session 18) and this session's structural one (four
+parsers, four separately-discovered depth budgets, three of them found by a
+crash). F should be designed with an explicit, PSRAM-capable evaluation stack
+from the start rather than inheriting a fourth frame budget.
+
+---
+
+## D47: Stack frames are a budget — no compiling inside render(), no kMaxLen arrays on a recursive path, and a trap where core 0 meets core 1
+
+**Date**: 2026-08-08
+**Status**: Accepted (bugfix; the Y= lockup reported 2026-08-05, plus a second
+instance of the same class found while fixing it)
+**Context**: From the bench: "the Y= function editor freezes the calculator,
+every time, on Pico 1 — only the first few pixel rows of the header render,
+then keys are dead and it needs a physical power cycle." Testing stopped there,
+so the whole Phase 5 CAS on-device checklist sat behind it.
+
+The cause is the bug class **D45** named and then explicitly warned about:
+"graph rendering, matrix ops and Phase 6's MicroPython heap may currently work
+*because* nothing traps." Core 0's stack is the 4 KB `SCRATCH_Y` bank, sitting
+directly on top of core 1's `SCRATCH_X`. Overrun does not fault; it walks
+straight into core 1's live frames, starting at its outermost one.
+
+`SlotEditorScreen::render()` coloured each row red-or-white by calling
+`field_valid()` → `math::engine().compile()` — **inside the renderer**. Frames
+measured on the linked Pico 1 ELF:
+
+| frame | bytes |
+|---|---|
+| `main` | 216 |
+| `ScreenManager::render_frame` + `Framebuffer::render_frame` | 80 |
+| `SlotEditorScreen::render` | 120 |
+| **`Engine::compile`** | **2,232** |
+| `preprocess` (peer of the parse) | 560 |
+| `te_compile` + one parser nesting level | 56 + 160 |
+
+`Engine::compile`'s 2,232 B is almost all `te_variable lookup[kLookupCount]` —
+122 entries x 16 B = 1,952 B, rebuilt on the stack on *every* compile.
+`eval_internal` and `compile_with` each carried their own copy.
+
+Every reported symptom follows. Strip mode renders in 16-px bands and the
+header bar is exactly `kStatusH` = 16, so strip 0 pushes fine; core 0 then
+renders strip 1 **while core 1 is mid-DMA on strip 0**, overruns into its
+stack, and core 1 dies. Core 0 blocks forever in `wait_one_ack()`, and since
+keys are polled on core 0, input dies with it. Every time, because the stored
+expressions are the same each boot. The graph screen survives the same
+expressions because `recompute_function` sits ~200 B shallower *and* runs
+outside `render_frame`, with core 1 parked.
+
+**Decision**: four changes, in the order they matter.
+
+1. **`render()` only draws.** `SlotEditorScreen` caches field validity in a
+   `valid_mask_` bitfield, refreshed from `on_activate()` and after each
+   mutating key. This is the contract `list_editor.hpp` has documented since
+   Phase 3A ("refresh_cells() from on_key/on_activate; render() only draws");
+   the slot editors never got it. Secondary win: ~140 `te_compile` calls
+   (each with its own mallocs) per frame, gone.
+
+2. **The tinyexpr binding table moves to bss.** It is stable after startup —
+   `a`-`z` bind to the singleton's `Variables`, and `constants()`/`catalog()`
+   return constexpr tables — so it is built once. Safe to share because
+   `te_compile` reads it only while parsing and engine compiles never nest.
+   `Engine::compile` **2,232 → 280 B**, `eval_internal` likewise,
+   `compile_with` 2,368 → 288 B, firmware-wide.
+
+3. **The same disease, worse, on the list path.** The new frame report (below)
+   immediately found it: `HomeScreen::evaluate_input` (872) →
+   `listexpr::evaluate` (1,192) → `eval_list_into` (**2,248, and recursive**)
+   = 4,312 B at recursion depth 1. A plain `{1,2,3}` on the home screen was
+   already overrunning, silently, on a path HW-verified since Phase 3A. Fixed
+   by keeping the leaf evaluators out of line (`noinline` on `eval_literal`,
+   `eval_seq`, `eval_range`, `eval_clift` — inlined, their `kMaxLen` locals,
+   `eval_seq`'s `arg[5][256]` worst of all, were charged once per level
+   instead of once), moving every non-reentrant `kMaxLen` buffer to bss, and
+   making the buffers that genuinely are per-level **depth-indexed** —
+   the pattern `g_temp[kMaxDepth]` already used in that file.
+
+4. **A hard recursion cap, and a trap.** `eval_list_into`'s recursion is now
+   bounded in the function itself (`RecGuard`, `kMaxRec = 3`) rather than at
+   individual call sites: the old `ctx.depth` only ever covered the
+   cumsum/delta path, so `sort_asc(sort_asc(sort_asc(...)))` and the lift path
+   through `extract_operands` both recursed uncounted. And
+   `PICO_USE_STACK_GUARDS=1` + `PICO_STACK_SIZE=4096` put an MPU trap exactly
+   at `__StackBottom == __StackOneTop`, with `isr_hardfault` recording the
+   faulting PC in a watchdog scratch register and rebooting, so the next boot
+   prints `fault: previous boot hard-faulted at pc=0x...`. Without that
+   handler the guard would convert silent corruption into an indistinguishable
+   lockup — the SDK's default handler is an infinite loop.
+
+**Results** (Pico 1, measured):
+
+| path | before | after |
+|---|---|---|
+| Y= editor render | ~3,200+, overrunning | **424** |
+| home-screen list expr, worst case at the cap | ~4,300+, overrunning | **3,152** of 4,096 (944 margin) |
+| `Engine::compile` frame | 2,232 | 280 |
+| `eval_list_into` frame (per level) | 2,248 | 32 |
+
+**Rationale**: shrinking `Engine::compile` alone would have fixed the Y=
+lockup, but it would have left the actual defect — a 2 KB frame under a
+renderer that runs ~20x a frame — in place for the next thing to trip over.
+Caching validity fixes the design error; hoisting the table fixes the
+firmware-wide exposure. Both were needed before the guard could be switched
+on, and the guard is what stops the next instance being another silent
+lockup.
+
+**Tradeoffs**:
+
+- **bss +10,284 B on the Pico 1** (198,836 → 209,120), trading SRAM for stack.
+  Headroom 61.8 → 51.8 KB. This eats into the **Phase 6 margin specifically**:
+  the MicroPython heap is 48 KB, so the spare drops from ~14 KB to ~4 KB. The
+  three documented levers (heap 48→40 KB, ArrayStore slab cut, `g_chunk` fold,
+  `pre-phase5-review.md`) are worth far more than this and are now more likely
+  to be needed. A reclaim pass on the new statics is possible too — the four
+  leaf scratch blocks are provably never simultaneously live and could be
+  unioned for ~2.3 KB, deliberately not done here because a wrong aliasing
+  union is the same class of bug this entry is about.
+- The reported `size` figure jumps a further **4,096 B** that is *not* real:
+  `PICO_STACK_SIZE` 2048 → 4096 doubles both `.stack_dummy` sections. Those
+  live in the dedicated `SCRATCH_X`/`SCRATCH_Y` banks and were never
+  allocatable. Compare `.bss` alone across this change, not `size`'s total.
+- `kMaxRec = 3` makes deeply nested list expressions an error. The boundary
+  case the code documents, `cumsum(sort_asc({...}))`, is exactly at the cap
+  and still works; a fourth level now says "Too deeply nested". It used to
+  corrupt core 1's stack instead.
+- **The stack guard is a tripwire, not a barrier.** On RP2040 it is a single
+  32-byte MPU subregion at `__StackBottom`
+  (`runtime_init_stack_guard.c:14-32`), so it reliably catches gradual or
+  recursive growth — the D45 and item-3 cases — but one oversized `sub sp, #N`
+  can step straight over it. `scripts/size-report.sh`'s new frame listing is
+  the deterministic half of the check: it walks prologues out of the ELF and
+  reports anything over a threshold, which is exactly the measurement that
+  root-caused this bug and found the list-path instance.
+
+### What the hardware pass added: tinyexpr had no depth cap either
+
+Flashed to the Pico 1 the same day. The boot was clean and the guard did not
+trip through init — but **F1/F4/F5 still failed**, now as "black screen, then
+back to the home screen" rather than the original dead-keys lockup. That is
+the fault handler working: serial on the next boot read
+
+```
+fault: previous boot hard-faulted at pc=0x100551da
+```
+
+which resolves to `factor+0xa` in `tinyexpr.c` — the `push {r5, r6, r7, lr}`
+**prologue** instruction. A fault on the prologue push is unambiguous stack
+overflow, and it exposed the gap this entry had missed: **D45 gave the CAS
+parser stated depth caps; tinyexpr's parser never got one.** Its recursive
+descent costs **200 B per nesting level** (measured
+`list`+`expr`+`term`+`factor`+`power`+`base`), with no limit of its own, so
+depth is whatever the input says.
+
+The input, in this case, was the user's own: `testdrive-2026-08-02` recorded
+perf stress probes of "up to 20 nested trig calls", and one was still sitting
+in Y1. The Y= path allows 16 levels. That is why the editor failed *every
+time*, and why F4/F5 failed too — `recompute_function` compiles the same slot.
+
+**`kMaxParseDepth = 8`**, checked in `eval_internal`/`compile`/`compile_with`
+after `preprocess`. Sized to the tightest caller, not to taste: the list-lift
+path (`evaluate_input` → `listexpr::evaluate` → 3x `eval_list_into` →
+`eval_lift` → `compile_with`) leaves ~1,696 B for the parser, so eight levels.
+The Y= path alone would allow sixteen, but one cap has to hold everywhere.
+Over-deep input is now a parse error — the row draws red and stays editable.
+`test_math` 235 → 242 covers depths 9/20/40 through both `compile` and
+`evaluate`.
+
+**HW-verified on the Pico 1**: Y= opens and renders, Y1 draws red (the stress
+probe, correctly rejected), the graph works, and three consecutive
+`graph recompute:` lines came in at 103,163 / 103,107 / 103,019 us with no
+fault — the same path that had been faulting deterministically.
+
+The sequencing is the lesson worth keeping: the guard plus the fault reporter
+turned a second, still-unknown instance of this bug class into a PC and a
+one-line diagnosis, on the first flash. Shipping the guard without the handler
+would have produced another indistinguishable lockup.
+
+### Third parser, and why this one needed two caps
+
+Same session, immediately after: `math::complexexpr` was flagged above as the
+obvious next uncapped parser, and it is — but it does not take the same
+treatment. It has **two** recursion cycles, both routed through `parse_unary`,
+which is where the guard therefore lives:
+
+1. paren/function nesting — `parse_primary` -> `parse_expr` -> `parse_term`
+   -> `parse_unary`;
+2. right-associative `^` — `parse_power` -> `parse_unary`, **with no
+   parentheses at all**, so `2^2^2^2^...` nests once per caret.
+
+Cycle 2 is why the paren-depth pre-scan used for tinyexpr would not do here: a
+string scan cannot see it. (tinyexpr has no such cycle — its `factor` builds
+right-associativity iteratively via an insertion pointer, verified in source,
+so `kMaxParseDepth`'s proxy is sound.)
+
+The cap could not be a single number. At **360 B/level**, the affordable depth
+depends on how deep the caller already is, and the two entry points differ by
+1.2 KB: the home screen enters ~1,208 B in, while list and matrix evaluation
+reach the same parser ~2,400 B in (`eval_literal` for `{1+i,...}` elements,
+`eval_clift` for `2i*l1`, `eval_matrix_body` for scalar spans). One
+conservative value would have had to be 4 — and rung N of the D45 ladder needs
+depth N+1, so 4 would have broken `test_real_pow_exact`'s rung-4 case, which is
+a deliberate D45/D46 regression test. So the cap belongs to the *entry point*:
+`kMaxParseDepth = 7` (default) and `kMaxParseDepthNested = 4`, passed as a
+defaulted argument to `evaluate()`.
+
+Measured, all three paths:
+
+| path | prefix | cap | total | margin |
+|---|---|---|---|---|
+| home screen | 1,208 | 7 | 3,728 | 368 |
+| via `list_expr` | 2,400 | 4 | 3,840 | 256 |
+| via `mat_expr` | 2,056 | 4 | 3,496 | 600 |
+
+Getting the list prefix down to 2,400 took the same bss treatment on
+`listexpr::evaluate` (720 -> 280 B) and `eval_clift` (360 -> 176 B). **One of
+those was wrong and `test_lists` caught it**: making `eval_clift`'s
+`CTerm terms[kMaxCTerms]` static broke `2i*l1` with a segfault, because only
+`.sign` is assigned per use — `.scalar{1.0, 0.0}` and `.list = nullptr` come
+from default member initializers that run per call for a stack local but
+*once* for a static, so the second call saw the previous call's accumulated
+scalar and a stale `Array*`. Reverted to the stack; 192 B is worth paying, and
+a static silently carrying state between calls is the same class of defect this
+entry exists to remove. Worth remembering when the leaf-scratch union below is
+picked up.
+
+`test_complex_expr` 113 -> 122. Pico 1 `.bss` 209,120 -> 209,888.
+
+**Still uncapped: `math::matexpr`'s parser**, and it is the worst of the three
+at **808 B/level** (`parse_power` alone is 416 B, holding matrix temporaries)
+with only ~2 levels of headroom from the home screen. Not touched here — it
+needs its own measurement pass and probably frame reduction before a cap can be
+set that does not break ordinary matrix expressions.
+
+### The actual root cause of the 4-paren crash, and three wrong answers first
+
+Everything above fixes real defects, but **none of it fixed the crash the
+bench kept reporting**: four nested parens hard-faulted the board, in every
+number mode. Recording the sequence because the *method* was the problem.
+
+Three wrong attributions, each from reasoning about static frame sizes
+instead of measuring:
+
+1. **`matexpr`** — ruled out by reading: it early-outs at `mat_expr.cpp:918`
+   when the input has no matrix token, so it never sees `((((1+1))))`.
+2. **`build_layout` inside `HomeScreen::render()`** — real, and the
+   measured +376 B steps seemed to confirm it. But the step was
+   complexexpr's 368 B/level, not the layout parser's 476. Cutting the
+   layout path from 376 to 96 B/level moved the observed peak *not at all*,
+   which is what exposed the mistake.
+3. **complexexpr's recursion depth** — the cap was too generous, but depth
+   was not what overflowed.
+
+What settled it was building the right instrument, several rounds later than
+it should have been: a **crash record in `.uninitialized_data`** holding the
+whole exception frame. It survives the warm reset the handler triggers, where
+two packed watchdog scratch words could only report "implausible" — and
+implausible was exactly what these faults were. With the full frame:
+
+```
+fault: core 0  pc=0x10004f6e lr=0x20041490 sp=0x20040fe0
+```
+
+`sp` is 32 bytes below `__StackBottom` — one exception frame — so the guard
+trapped cleanly, and `pc` resolves to `preprocess+0x12`, `engine.cpp:28`: the
+prologue allocating `char tmp[256]` in a 560 B frame.
+
+**The cause was the leaf, not the recursion.** `HomeScreen::evaluate_input`
+runs `complexexpr::evaluate` as a probe on *every* input (to turn a NaN into
+"Non-real result"), which is why this reproduced in REAL mode too. And
+`parse_scalar_span` handled **every numeric literal** by copying it into a
+buffer and calling `eval_field` — which runs the entire tinyexpr engine:
+`Engine::evaluate` -> `eval_internal` -> `preprocess`, ~1,220 B. That sat at
+the *leaf* of a 360 B/level recursion, i.e. at maximum stack depth.
+`((((1+1))))` came to ~1,200 prefix + 4x360 + ~1,500 leaf, over 4,096. Three
+parens fit; four did not.
+
+Fixed by parsing plain numeric literals with `strtod` (which is what tinyexpr
+would have used anyway) and moving the fat leaf buffers to statics — all
+non-reentrant by inspection: `preprocess`'s `tmp`/`rebuilt`,
+`Engine::evaluate`'s `body`, `eval_internal`'s `processed`,
+`parse_scalar_span`'s `span`.
+
+| frame | before | after |
+|---|---|---|
+| `preprocess` | 560 | 48 |
+| `Engine::evaluate` | 316 | 64 |
+| `eval_internal` | 280 | 32 |
+| complexexpr per level | 360 | 240 |
+| `eval_field` leaf | ~1,220 | 208 |
+
+Worst case at the cap is now **3,128 of 4,096**, 968 B margin. HW-verified.
+
+**Two things worth keeping from this.** First, the earlier garbage fault PCs
+(`0xe6fd6f2e`, `0x998c9015`) were not noise: at 376 B/level a single
+`sub sp, #N` leaps clean over the 32-byte guard window, so core 0 silently
+killed core 1 instead of trapping, and the "PC" was core 1's corrupted return
+address. The layout fix shrinking frames to 96 B/level is *why* the crash
+finally trapped cleanly and named itself — an accidental but real benefit.
+Second, the guard's own failure mode bit hard: a first cut of `paint_stack()`
+wrote into the guarded 32 bytes, faulted on its first store, and boot-looped
+the board past USB enumeration — unrecoverable without the physical BOOTSEL
+button. Hence `kFaultsBeforeBootsel`: three consecutive faults now call
+`reset_usb_boot()` so a boot-looping image parks itself in BOOTSEL.
+
+Re-deriving both caps against the new frames also caught `kMaxParseDepth = 8`
+overshooting its tightest caller (the list-lift path affords 7). Both parsers
+now stop at **7 parens** — Engine counts parens, complexexpr counts recursion
+levels where the top-level call is level 1, so its constant is 8 for the same
+user-visible limit.
+
+**Revisit when**: the frame report shows a new function over ~1 KB, or the
+Phase 6 budget gets tight enough that the leaf-scratch union is worth taking.
+Also revisit the parse caps if 7 parens ever rejects an expression someone
+actually wanted — the home path alone affords 13 (Engine) and 10
+(complexexpr); the binding constraint is the list-lift chain, which enters
+~1,100 B deeper — it is bounded by the list-lift prefix, so shrinking
+`listexpr::evaluate` (720 B) or `HomeScreen::evaluate_input` (568 B) buys
+levels back. **`math::complexexpr` has its own recursive-descent parser
+(`parse_unary` 232 B/level) and is still uncapped** — same class, reachable in
+non-REAL number mode; it did not surface here but it is the obvious next one.
+If core 0's 4 KB ever becomes the real constraint rather than individual
+frames, the structural move is to relocate core 1's stack out of `SCRATCH_X`
+(`multicore_launch_core1_with_stack`) and give core 0 a custom linker region —
+deliberately not attempted here.
+
+---
+
+## D46: The complex evaluator must not disagree with the real one — DEGREE-mode trig, and exact real powers
+
+**Date**: 2026-08-05
+**Status**: Accepted (bugfix; Phase 4C defect found during the Phase 5 Stage 5
+hardware pass)
+**Context**: Reported from the bench: "trig functions in deg mode give results
+identical to radian mode." Root cause is `src/math/complex.cpp` — `c_sin(z)`
+is `{std::sin(z.re) * cosh(z.im), ...}`, calling `std::sin` on the raw value.
+The real evaluator's trig goes through `functions.cpp`'s `rad()`, which
+applies the degree scaling; the complex evaluator never did. So whenever
+Number mode is RECT or POLAR (which routes home-screen evaluation through
+`complexexpr`), **every trig call answered in radians and the MODE row's
+DEGREE setting was silently ignored**. Confirmed on the host:
+`sin(30)` in DEGREE gave `0.5` from the real path and `-0.9880316241` from the
+complex path.
+
+This is **not** a Phase 5 regression — `complex.cpp` predates it and has
+shipped since Session 18 (Phase 4C). It surfaced now only because the Stage 4
+verification script sends the tester into RECT/POLAR mode.
+
+**Decision**: add angle-mode wrappers (`m_sin`/`m_cos`/`m_tan` scaling in,
+`m_asin`/`m_acos`/`m_atan` scaling out) in `complex_expr.cpp`'s `kFns` table.
+`complex.cpp`'s `c_*` functions stay pure math. The whole complex argument is
+scaled, not just its real part (TI-89's behavior).
+
+**Rationale**: `complex_expr.cpp`'s table is the only caller of the `c_*`
+trig functions, so the wrapper layer is complete by construction. Putting the
+scaling at the evaluator boundary mirrors where the real path already does
+it, and keeps a `Complex` sine from depending on global UI state — which
+matters because `Complex` is also used by matrices, lists and stats, none of
+which should acquire an angle mode by accident. Scaling the whole argument is
+what makes the decisive property hold: **for a real-valued argument the two
+evaluators agree in either mode**, which is exactly what "DEG mode does
+nothing" was violating.
+
+**Tradeoffs**: `sin(2+3i)` in DEGREE now means `sin((2+3i) x pi/180)` rather
+than radians-regardless. That is a genuine semantic choice for an input no
+calculator agrees on, taken because it is the one that degrades correctly to
+the real case. Nothing else in the codebase consumes complex trig, so the
+blast radius is the home screen in non-REAL Number mode.
+
+**Test gap this exposed**: `test_complex`/`test_complex_expr` never varied
+angle mode, and `test_exact_trig` varies it but goes through the real
+evaluator — so nothing crossed the two. `test_angle_mode()` now asserts both
+evaluators agree on a corpus of real-valued trig in both modes
+(`test_complex_expr` 75 → 99 checks).
+
+### Second defect, same principle: `c_pow` was not exact for real powers
+
+Found in the same bench pass. `10202^2` and the nesting rung
+`((((2+1)^2+1)^2+1)^2+1)^2+1` displayed **white in REAL mode but amber in a+bi
+mode**. Cause: `c_pow(base, exp)` was unconditionally `c_exp(c_ln(base) *
+exp)`, so a real power came back a hair off the integer. That is enough to
+fail `format_number`'s `x == std::floor(x)` test (`format.cpp:128`), dropping
+the value out of the `"%.0f"` integer branch into `"%.10g"`, which prints a
+fractional digit. The exact-form probe then compared `"104080805.x"` against
+its own `"104080805"`, found them different, declared the result
+"interesting", and rendered it amber.
+
+Only that one rung showed it, and the reason is worth recording: rungs 1-3
+(10, 101, 10202) are too small for the drift to reach ten significant
+digits, and rungs 5-6 (>= 1e10) take `format_number`'s scientific branch
+where it is invisible. **104080805 is nine digits — the only rung whose tenth
+significant digit lands in the fraction.**
+
+Fixed by taking `std::pow` directly when both operands are real and either
+the base is positive or the exponent is an integer; genuinely complex powers
+still route through `exp(ln)`. The real fast path also handles a negative
+base with an integer exponent (`(-2)^3`), which `exp(ln)` cannot do on the
+real line at all. This one lives in `complex.cpp` rather than the wrapper
+layer, because unlike the angle scaling it is pure math with no dependence on
+UI state.
+
+**Note on what was *not* a bug**: the amber itself was the exact-form feature
+behaving exactly as designed — the decimal really had drifted, and the exact
+value really was the better answer. The defect was upstream, in the
+arithmetic.
+
+**Revisit when**: a second consumer of `c_sin`/`c_asin` appears — the scaling
+is per-caller by design, so a new caller must decide for itself rather than
+inherit it. `mat_expr.cpp:682` calls `c_pow` and now inherits the exact real
+path, which is what matrix element arithmetic wants.
+
+---
+
+## D45: Phase 5 Stage 5 hardening — CAS pass scratch moves off the stack into a two-ended pool, plus stated depth caps and a real Risk-2 abort
+
+**Date**: 2026-08-05
+**Status**: Accepted (Phase 5 Stage 5, task 4D.22)
+**Context**: Stage 5's brief was "stress testing + edge cases". An audit of
+`src/math/cas/` against spec §13 first found something worse than a missing
+test. `simplify_sum` and `simplify_product` each held four `kMaxOperands = 64`
+arrays on the stack — **1,144 B and ~1,140 B frames, measured on the linked
+Pico 1 object** — and they nest through `simplify_rec` once per level of
+ADD-inside-POW-inside-ADD. Core 0's stack is `__StackBottom 0x20041800` →
+`__StackTop 0x20042000`: 2 KB declared, and only 4 KB before `__StackOneTop`
+(0x20041000), which is core 1's stack — running the display service on both
+boards since D10 leg A. `PICO_USE_STACK_GUARDS` is not defined, so nothing
+traps.
+
+The blast radius was wider than CAS calls: `exact_form()` runs `parse_expr` +
+two `simplify()` passes on *every* home-screen input whose literals are all
+integers, so plain arithmetic reaches it.
+
+**Reproduced on the Pico 2 (fd61849), 2026-08-05.** The ladder
+`(2+1)^2+1` → `((2+1)^2+1)^2+1` → ... was typed out to rung 6, which is six
+nested levels ≈ 6.9 KB of stack. It **returned the correct answer**
+(1.173e32) and serial showed 46 `temp:` and 46 `psram-bulk:` heartbeats with
+no gap, no fault, no reboot. The overrun ran past core 1's stack top *and*
+past its declared bottom into the unused gap above the heap — core 1's
+display loop only occupies the top few hundred bytes of its region, so
+nothing live was hit. **The failure mode is therefore silent memory
+corruption whose blast radius depends on what core 1 is doing at that
+instant, not a deterministic fault** — which is worse to diagnose, and
+invisible to the host suite (x86, 8 MB stack).
+
+**Decision**: four changes, all in `src/math/cas/`.
+
+1. **The `ExprPool` arena becomes two-ended.** Nodes bump up from the bottom
+   as before; the passes' per-invocation scratch arrays bump *down* from the
+   top under LIFO `scratch_mark()`/`scratch_release()` (RAII `ScratchScope`).
+   `simplify_product`, `simplify_sum`, `split_term` and `deriv_product` take
+   their arrays from there instead of the stack. Scratch cannot share the
+   node end: `simplify()` runs its fixed-point loop up to 50 times without
+   resetting, so a bump-only scratch would multiply by passes x depth and
+   exhaust the arena; LIFO release makes every pass reuse the same space.
+2. **Stated depth caps** replace bounds that happened to fall out of input
+   length. Parser `kMaxDepth = 12` (parens, function arguments, unary sign
+   chains); simplifier `kMaxDepth = 8` on the two n-ary passes only.
+3. **Risk 2 is actually implemented.** `ExprPool` gained a sticky
+   `overflowed()` flag and `near_capacity()` (the spec's 80%). `evaluate_home`
+   now reports `"Too complex"` when the flag is set, and `exact_form` leaves
+   the decimal standing — previously `simplify()`'s "last good form" fallback
+   returned a tree indistinguishable from a converged one.
+4. **`expand()` no longer simplifies twice.** The binomial path returned
+   `simplify(sum)` and `expand()` then simplified that again — ~5.4 KB of a
+   22.5 KB arena spent re-canonicalising an already-canonical tree.
+
+**Rationale**: the arrays were the whole problem, and the pool is what the
+arena exists for. Moving them there fixes the hazard at its source rather
+than capping depth until the symptom goes away, keeps `kMaxOperands` at 64 so
+no expression that worked before stops working, and converts an
+unbounded-and-silent overrun into a bounded failure that returns `nullptr`.
+The caps are then sized to the *measured* worst case rather than a round
+number: the deepest-recursing CAS frame is now `integrate_rec` at 172 B, so
+12 x 172 B + `evaluate_home`'s 580 B base keeps an operation near 2.6 KB,
+inside the 4 KB with margin. Rejected: shrinking `kMaxOperands` to 24 (silently
+degrades 25-64-term expressions and still leaves 2 KB at four levels), and a
+depth cap alone (rejects working input, leaves the frames as a trap for the
+next caller).
+
+**Tradeoffs**: scratch costs ~1 KB of the 22.5 KB arena per nesting level,
+bounded by the depth cap. Expressions nested past 12 levels are now refused
+rather than attempted — no hand-entered expression comes close, and
+`kMaxInputLen` (48) admits at most 7 of the worst-case shape anyway. The
+`near_capacity()` abort is deliberately **not** applied to expand's binomial
+path: that path is linear in n (capped at 20) with a known cost, and
+`(x+1)^10` legitimately reaches ~76% of the arena, so an 80% abort there
+would reject working input.
+
+**Results**: `test_cas` 272 → **368 checks**, 0 failures; full host suite
+green. Pico 1 bss 201,096 → **198,836** (−2,260). Largest recursive CAS frame
+1,144 B → **172 B**. lint/format clean. The new `test_stress_edge_cases()`
+immediately earned itself by catching a defect in the first cut of this very
+change: `alloc_raw` bounded the node end against the arena end rather than
+the scratch end, so nodes bumped through live scratch arrays and the pass
+read back overwritten `Expr` pointers.
+
+**Revisit when**: (a) a CAS pass is added that recurses deeper than
+`integrate_rec` or carries a bigger frame — re-measure and re-derive the
+parser cap, the arithmetic is in `parser.cpp`'s comment; (b) the arena moves
+off `scratch::kCompute` or changes size, which shifts both the scratch budget
+and the ~76% that `(x+1)^10` occupies; (c) **`PICO_USE_STACK_GUARDS` is
+considered** — see the follow-up note below, deliberately left out of this
+change.
+
+**Follow-up left open (not done here)**: enabling `PICO_USE_STACK_GUARDS=1`
+with `PICO_STACK_SIZE=4096` would put a trap exactly where core 0 starts
+eating core 1's stack, turning this whole class of bug from silent corruption
+into a hard fault. It is not bundled into Stage 5 because it is a
+whole-firmware change, not a CAS one: this session proved at least one path
+overran silently, and there may be others (graph rendering, matrix ops, and
+Phase 6's MicroPython heap) that currently work *because* nothing traps.
+It deserves its own soak on both boards rather than riding along with a
+phase close.
+
+---
+
+## D44: Exact-form follow-ups — Alt+Enter decimal escape, exact trig at special angles, and non-REAL number modes
+
+**Date**: 2026-08-03
+**Status**: Accepted (Phase 5 Stage 4 follow-up, same day as D43)
+**Context**: The first Pico 2 flash of D43's exact-form display raised three gaps
+in immediate use. (1) `>dec` was the only way to see a decimal, which means
+retyping the whole expression with a suffix — clumsy for the common "yes I know
+it's $\sqrt{2}$, what's the number" case. (2) `sin(pi/3)` showed `0.8660254038`, not
+`√3/2` — exact trig at special angles is the single most expected case of this
+feature and it was missing. (3) Exact forms were REAL-mode only, a scoping
+decision D43 recorded as a v1 limitation with no technical reason behind it.
+**Decision**:
+
+1. **Alt+Enter is the decimal escape.** With an expression entered it
+   evaluates with the exact-form probe suppressed, identically to a trailing
+   `>dec`. With the input line empty and the newest history result being an
+   exact form, it re-runs *that* expression as a decimal, so an amber
+   $\sqrt{2}$ can be turned into `1.414213562` without retyping. Commands
+   (`cls`, `help`, ...) are unaffected. The `#HOME` and a new `#EXACT FORMS`
+   block in the on-device HELP KEYS/SYNTAX tabs document it.
+2. **Exact trig at special angles.** `sin`/`cos`/`tan` of a rational multiple of
+   $\pi$ with denominator in $\{1,2,3,4,6\}$ fold to their exact values through a
+   24-entry table indexed in twelfths of $\pi$ (one table covers both the $\pi/6$ and
+   $\pi/4$ families; `cos(x) = sin(x + pi/2)` is an index shift, so only sine and
+   tangent tables are stored). **Angle-mode aware**: in DEGREE mode the argument
+   is read as degrees, so `sin(60)` folds exactly as `sin(pi/3)` does in RADIAN.
+   `math::frac::pi_multiple` does the recognition.
+3. **Non-REAL number modes get exact forms** for real-valued results. The probe
+   moved into a shared `apply_exact_form` helper called from both the REAL and
+   the complex dispatch branches. Genuinely complex values stay decimal.
+4. **"Interesting" now compares formatted strings, not doubles.** A bare integer
+   is still normally not upgraded, but it *is* when the numeric path would
+   display something else.
+**Rationale**: The decimal escape was first bound to Shift+Enter, on the
+reasoning that `shift_held` rides on every `kEnter` event. **On hardware it does
+not fire**: the diag screen showed the chord arriving as key code 59 (`kInsert`)
+rather than 52 (`kEnter`). The STM32 *translates* Shift chords into their own
+scan codes — Shift+Enter to 0xD1, the same family as Shift+F1..F4 to F6..F9 —
+instead of reporting base-key plus modifier, which is the same underlying
+behavior as the D12 arrow-swallowing seen from a different angle. Binding
+`kInsert` would have worked but squats on a real key with its own meaning, so
+the shortcut moved to **Alt+Enter**: Alt passes its flag through intact, and
+Alt+UP/DOWN already scrolls the history view, so the modifier is established on
+this screen. Reusing the existing `to_dec` plumbing made it a one-parameter
+change rather than a new display path. For trig, the twelfths
+indexing is what keeps this a table lookup instead of a case analysis: every
+exact angle in both families is an integer number of $\pi/12$, so reduction is one
+modulo. Handling DEGREE mode by reinterpreting the argument (rather than
+declining to fold) matters because a calculator in DEGREE mode is where a user
+most naturally types `sin(60)`. Point 4 is what lets `sin(pi)` show `0` instead
+of `1.224646799e-16` and `cos(pi/2)` show `0` instead of `6.123233996e-17` —
+float noise the numeric path cannot avoid and the exact path knows the answer to
+— while keeping `tan(pi/4)` out of the amber path, since its
+`0.9999999999999999` already formats as `1`. Comparing doubles would have caught
+`tan(pi/4)` too; comparing `format_number` output is the precise test because
+the display is what the gate is actually about.
+**Tradeoffs**: The trig table is +5.3 KB flash (bss unchanged at 201,096). Only
+sin/cos/tan — the inverse functions (`asin(1/2)` → `π/6`) are not folded, and
+neither are hyperbolic or `atan2`. In DEGREE mode the argument must be an
+integer number of degrees, so `sin(22.5)` does not fold even though `sin(pi/8)`
+is expressible. Alt+Enter on an empty line only acts when the newest result is
+an exact form; on a plain decimal result it does nothing (deliberate — silently
+re-evaluating an arbitrary past entry would be surprising). The complex-mode
+extension means RECT/POLAR now shows amber results where it showed decimals,
+a visible change in those modes.
+**Revisit when**: Inverse-trig exact values are wanted (the table is already the
+right shape to invert); or DEGREE-mode half-degree angles turn up in real use;
+or Insert acquires a real binding and the two want reconciling. The
+Shift-chord translation behavior is now recorded in `platform/keyboard.hpp`
+next to the D12 arrow note, so the next binding does not repeat this.
+
+## D43: Phase 5 Stage 4 exact-form display — always-on, gated by an integers-only input rule plus a numeric-agreement check
+
+**Date**: 2026-08-03
+**Status**: Accepted (Phase 5 Stage 4, tasks 4D.23 / 4D.24). Resolves open questions P5-5 and P5-6.
+**Context**: `phase5-spec.md` §10.1 wanted home-screen results with a clean closed
+form to display that form instead of a truncated decimal (`sqrt(2)` → `√2`,
+`sqrt(8)` → `2√2`, `pi*2` → `2π`, `1/3` → `1/3`). Two questions were left open:
+whether recognition is always-on or a MODE toggle (P5-5), and whether `pi` gets
+the treatment alongside `sqrt` (P5-6). Both were answered "always-on, yes to pi",
+which makes the feature touch *every* plain scalar result on the home screen —
+so the real design work is bounding what it may change.
+**Decision**: Always-on, no MODE row entry; `pi` included. `>dec` is the per-result
+opt-out (it already existed and previously did nothing beyond stripping itself).
+Recognition lives in a new `src/math/cas/exact.cpp`, **not** in `simplify()`, and
+runs as a side-effect-free probe after the numeric result is committed, mirroring
+the D30 `complexexpr` pattern. Five gates decide whether the decimal is replaced:
+
+1. The numeric result must exist, be finite, and not be a store (`5->a`).
+2. Every numeric literal in the *parsed* input must be an integer.
+3. No variables may appear anywhere in the parsed tree.
+4. The simplified tree must match a whitelist grammar — rational coefficients,
+   `sqrt` of a square-free integer, `pi` — and be "interesting" (a bare integer
+   is not upgraded).
+5. The recognized form must agree with the numeric result to $10^{-9}$ relative.
+
+Display goes through the existing D42 path (serialize → `render::build_layout`,
+amber `kSymbolic`). Two layout-builder changes give the handwritten look the
+spec's acceptance text asks for: a single-atom radicand drops its parens (`√2`,
+not `√(2)`), and a coefficient before a radical or a symbol glyph multiplies
+implicitly (`2√2`, `2π`, not `2*√(2)` / `2*π`).
+**Rationale**: Gate 2 is the one that makes "always-on" safe. Without it, `2.5`
+would display as `5/2` and `0.1+0.2` as `3/10` — technically the nearest small
+rational, but a change to results the user never asked to see reinterpreted.
+"The user typed only integers" is a clean, explainable proxy for "an exact answer
+was meant", and it also rejects the decimals that `convert()`/`solve()`
+substitution splices into the expression buffer. Gate 3 is not optional: the CAS
+parser has no `ans` or `e`, so `ans` parses as `a*n*s` and `e` as a variable while
+the numeric engine gives both real values — a silent-wrong-answer generator, not
+just a missed opportunity. Gate 5 makes the whole class of CAS-vs-`tinyexpr`
+parser divergences (implicit multiplication, unary-minus binding, DEG-mode trig)
+unable to alter a displayed answer, by construction. Keeping surd extraction out
+of `simplify()` matters because `simplify()` runs inside `integrate()`, `solve()`,
+`factor()` and the derivative fixed-point loops; rewriting `POW(NUM, 1/2)` there
+would change node shape mid-loop for passes that pattern-match on `POW` (§13
+Risk 1) for zero Stage-4 benefit. The implementation works in `POW(u, 1/2)` space
+rather than `FUNC sqrt(u)` space so the existing simplifier does the factor
+collection: `sqrt(2)*sqrt(2)` collapses to `2` and `1/sqrt(2)` becomes
+`POW(2,-1/2)`, making denominator- and radicand-rationalization one code path.
+**Tradeoffs**: `1/3` now displays as an amber stacked fraction where it used to
+show `0.3333333333`, and `pi` displays as `π` — a visible change to
+long-standing behavior, deliberate but worth watching on device. `>frac` results
+stay white flat text, so `1/3` and `1/3>frac` look different despite meaning the
+same thing. Expressions naming a variable or `Ans` never get an exact form
+(gate 3), so `5->a` then `a/3` stays decimal. Non-REAL number modes get no exact
+forms at all in v1 — the `force_complex` branch is not wired, a ~6-line
+follow-up. The grammar is a whitelist, so `pi^2`, `sqrt(pi)`, `2^(1/3)` and
+`sqrt(sqrt(2))` all fall back to decimal; each extension is a separate decision.
+Radicands are capped at $10^6$ (the trial-division factorizer runs to $d = 1000$,
+~0.5 ms worst case on the M0+) and denominators at 10000, matching
+`serialize.cpp`. The layout change also alters how a *typed* `2*pi` renders on
+the input line, which required updating an existing `test_layout` assertion.
+**Revisit when**: The on-device pass judges the `1/3`-as-fraction and `pi`-as-`π`
+changes too intrusive (the escape hatch is to require a `sqrt`/`pi` flag rather
+than any flag, dropping bare rationals back to decimal); or a MODE toggle is
+wanted after all; or non-REAL modes need exact forms; or the whitelist grammar
+starts rejecting forms users actually hit.
+
+## D42: Phase 5 CAS result rendering — reuse `render::build_layout` on the serialized string instead of a dedicated `expr_to_layout` tree-walker
+
+**Date**: 2026-08-02
+**Status**: Accepted (Phase 5 Stage 3, tasks 4D.4 / 4D.21)
+**Context**: Spec task 4D.4 called for `expr_to_layout` — a function that walks a
+CAS `Expr` tree directly into `render::LayoutNode` for 2D typeset display of
+symbolic results. The plan already hedged this ("or fold `expr_to_layout` into
+serialize"). The existing numeric layout builder, `render::build_layout`, is a
+recursive-descent typesetter over calculator-expression *strings* that already
+produces `kFraction`/`kSuperscript`/`kParen`/`kText` nodes with `√`/`π` glyph
+substitution and function-call shaping — everything a CAS-result renderer needs.
+**Decision**: CAS results are serialized to an infix string with
+`math::cas::expr_to_string` and rendered through `render::build_layout`; no
+separate `Expr`-tree layout walker is written. The home screen stores the
+serialized result in the history `Entry` (kind `kSymbolic`) and typesets it via
+`build_layout` in the accent color, reusing the same path already used for the
+input-expression line.
+**Rationale**: A tree-walker would duplicate all of build_layout's fraction/
+superscript/paren/precedence logic for *identical* visual output — the one case
+where a tree-walker could win (a big radical spanning its argument) is
+explicitly KIV (`√` stays the inline `kSqrtGlyph`). Serialize→build_layout reuses
+a tested, in-firmware path, adds no duplicate layout code or test surface, and
+sidesteps the render pool's single-tree-at-a-time constraint (results are held
+as strings, not live trees, so they survive `pool_reset` between redraws). The
+Expr→string→Node round-trip cost is trivial at Enter-rate.
+**Tradeoffs**: Reloaded history results (from `history.txt`) come back as plain
+text (kind `kPlain`), not re-typeset in the accent color — acceptable, and it
+mirrors how complex/MatAns results already reload as plain strings. Results
+longer than the 48-char `Entry.result` truncate on the scrollback (the newest
+result keeps its full 128-char form for typesetting).
+**Revisit when**: A big-radical (`√` spanning the radicand) or subscript node type
+is added to the layout back end, or expression-valued variables (idea F/H) need
+a live-tree renderer.
+
+## D41: Phase 5 CAS ExprPool placement — SRAM raw-pointer arena over the shared scratch kCompute region (rejects the spec's PSRAM plan)
+
+**Date**: 2026-08-02
+**Status**: Accepted (Phase 5 Stage 0, tasks 4D.1–4D.3)
+**Context**: `phase5-spec.md` §3 sketched the CAS node pool ("ExprPool") living in
+PSRAM on Pico 1 (64 KB) / SRAM on Pico 2 (128 KB), via `config::kCasPoolSize`,
+but §3 itself flagged "re-verify this pool's SRAM-vs-PSRAM placement against
+actual headroom before implementation starts." Stage 0 needed the concrete
+representation decided before building the tree/parser on top of it.
+**Decision**:
+1. **The pool is SRAM with raw `Expr*` child/next pointers** (`src/math/cas/expr.{hpp,cpp}`),
+   a bump allocator modeled on `render::pool.hpp` (`alloc()`/`reset()`, no
+   per-node free, bulk-reclaim per top-level op). `alloc()` uses `std::align`
+   over the region and returns `nullptr` when full (the spec §13 Risk-2
+   abort-above-capacity path).
+2. **PSRAM-backing is rejected.** `platform::Psram` is offset-addressed, not
+   memory-mapped (`src/platform/psram.hpp`) — access is `read()/write()` by
+   offset. A CAS engine traverses and rewrites nodes constantly; raw-pointer
+   trees can't live in PSRAM, and a read/write per node access would be
+   pathologically slow. The spec's PSRAM idea does not survive that constraint.
+3. **The pool overlays the shared math scratch kCompute region**
+   (`math::scratch::compute_region()`, `kComputeBytes = 22528`) rather than
+   allocating a dedicated buffer — **zero new bss**. kCompute's existing owners
+   (list_expr | stats | infer | matops) are never active during a home-screen
+   CAS op, so CAS borrows the whole region; `cas` is added to the owner
+   contract in `scratch.hpp`. A CAS op must not re-enter those owners while it
+   holds the arena (it doesn't in v1).
+4. **`config::kCasPoolSize` is retired** (was unused; superseded by the
+   kComputeBytes bound). ~22.5 KB / ~32 B per node ≈ ~700 nodes on device —
+   ample for the spec's acceptance sizes; pathological inputs hit the Risk-2
+   abort.
+**Rationale**: keeps Pico 1's ~68 KB SRAM headroom fully intact (the standing
+watch item) while giving the CAS a fast, pointer-native working set; reuses an
+already-proven arena rather than inventing a handle/index indirection just to
+reach PSRAM that would be far slower and more complex.
+**Tradeoffs**: the CAS working set is capped at ~22.5 KB (no PSRAM spill) — a
+very large symbolic expansion aborts rather than growing; the kCompute
+owner-guard remains convention-only (a debug guard is still the recommended
+follow-up from the pre-Phase-5 review). Deviates from the letter of
+phase5-spec §3, which is left as-is (per AGENTS.md: specs aren't edited casually;
+the as-built reconciliation lives here).
+**Revisit when**: a real CAS input overruns ~700 nodes on device (add PSRAM
+spill via a handle-based overflow tier, or grow the region); or the shared-arena
+coupling causes a re-entrancy bug (move CAS to its own region / add the debug
+owner-guard).
+
 ## D40: Phase 4D close — F sequenced after Phase 5 CAS, idea H deferred again
 
 **Date**: 2026-08-02
@@ -892,12 +2581,13 @@ plot both feel sluggish (not profiled). See `phase3-retro.md` and
 ## D4: History persisted as plaintext TSV
 
 **Date**: 2026-07-08
-**Status**: Accepted
+**Status**: Resolved 2026-08-03 (history-persistence bugfix session)
 **Context**: Open decision — history storage format: plaintext vs binary.
 **Decision**: Append `expr\tresult\n` lines to `/picocalc/history.txt`. On boot, read the last 8 KB and parse backwards into the ring buffer. Variables persist separately as a binary blob (`variables.dat`, 28 doubles).
 **Rationale**: Plaintext history is debuggable and hand-editable; parsing cost is trivial at 50 entries. Variables are fixed-size binary because they're not meant to be edited and round-trip exactly.
 **Tradeoffs**: History file grows unbounded (append-only) — a compaction pass is a future cleanup; 8 KB tail read caps what's loaded regardless.
 **Revisit when**: History file size becomes a concern, or results need structured metadata.
+**Resolution (2026-08-03)**: Both revisit triggers fired the same session. A Phase 5 regression (symbolic CAS results losing their `ResultKind` on reload — always came back `kPlain`) led to auditing the whole load/save path, which also turned up two latent pre-Phase-5 bugs: `load_state` read from the file *head* via `Storage::read_file`, not the tail its own comment claimed, so once `history.txt` outgrew the 8 KB window a reboot restored the oldest entries, not the newest; and the promised compaction pass had never been written, so the file really did grow unbounded. Fixed all three in one pass: a third tab-separated column (`expr\tresult\tS|P\n`, backward compatible) carries the kind; a new `Storage::file_size()` lets `load_state` seek to the true tail; and `HomeScreen::compact_history()` rewrites the file down to its last 8 KB once it exceeds 24576 bytes. See worklog's 2026-08-03 entry for full detail. The plaintext-TSV format itself is unchanged and still the right call — only the read offset, growth bound, and column count needed fixing.
 
 ## D6: RGB565 framebuffers, RGB666 on the wire
 

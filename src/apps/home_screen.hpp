@@ -7,6 +7,11 @@
 
 namespace apps {
 
+// Evaluation probe (5.2.12, D52): microseconds for the last evaluation, or 0
+// when built without -DPICOCALC_EVAL_PROBE. Declared unconditionally so the
+// inject echo needs no #if around the call itself.
+uint32_t home_eval_us();
+
 // Calculator home screen (task 2.5): expression input at the bottom,
 // scrollable history above, results via math::Engine.
 class HomeScreen : public ui::Screen {
@@ -28,13 +33,35 @@ public:
     // the selected constant's identifier, 4D.17).
     void insert_text(const char* s);
 
+    // Submit `line` as if it had been typed at the input line and Enter
+    // pressed — the *same* code path, not a parallel one (Phase 5.1,
+    // task 5.1.1). Serial injection uses this; sharing submit_input() with
+    // the Enter key is what makes an injected result trustworthy as
+    // equivalent to a typed one.
+    //
+    // Returns false, having done nothing, when `line` is null, empty once
+    // trimmed, or longer than the input line holds — set_text() truncates
+    // silently (strncpy, ui::InputLine::kCapacity), and a truncated
+    // expression would evaluate to something the caller never sent.
+    //
+    // When non-null, *result_out and *kind_out receive the newest history
+    // entry's result text and a static kind name ("plain" | "symbolic" |
+    // "error"). Both are set to nullptr if the line dispatched as a typed
+    // command (cls, diag, ...), which pushes no history entry.
+    bool submit_line(const char* line, const char** result_out = nullptr,
+                     const char** kind_out = nullptr);
+
 private:
     static constexpr int kMaxHistory = 50;
+
+    // Result-line rendering kind (Phase 5): plain numeric text, an error
+    // (red), or a CAS symbolic result (typeset in the accent color).
+    enum class ResultKind : uint8_t { kPlain, kError, kSymbolic };
 
     struct Entry {
         char expr[96];
         char result[48];  // Wide enough for a short list "{...}>l1"
-        bool error;
+        ResultKind kind;
     };
 
     Entry history_[kMaxHistory] = {};
@@ -69,12 +96,30 @@ private:
     void invalidate_input();
     void invalidate_history();
 
-    void evaluate_input();
+    // force_decimal suppresses the exact-form probe for this evaluation, the
+    // same way a trailing `>dec` does — Alt+Enter's "show me the decimal".
+    void evaluate_input(bool force_decimal = false);
+    // The plain-Enter body, factored out so the key handler and
+    // submit_line() run the identical sequence (trim -> command match ->
+    // else evaluate) and cannot drift apart. Assumes input_ is non-empty.
+    void submit_input();
     bool handle_command(const char* cmd);
+    // `mode [rad|deg|real|rect|polar|float|sci|eng|fixN]` — read or set the
+    // angle/number/display modes without the MODE screen, so serial injection
+    // (Phase 5.1) can reach the DEGREE and RECT/POLAR checklists.
+    bool handle_mode_command(const char* arg);
+    void format_modes(char* buf, size_t buf_len) const;
     int visible_count() const;
     int result_max_scroll() const;  // Max LEFT/RIGHT pan offset for result_full_
-    void push_entry(const char* expr, const char* result, bool error);
-    void persist_history_line(const char* expr, const char* result);
+    // Draw the newest result_full_ as a horizontally-pannable one-line window
+    // with leading/trailing ellipses when clipped (LEFT/RIGHT pan it).
+    void draw_result_window(gfx::Framebuffer& fb, int y, const gfx::Font& font,
+                            platform::Color color) const;
+    void push_entry(const char* expr, const char* result, ResultKind kind);
+    void persist_history_line(const char* expr, const char* result, ResultKind kind);
+    // Trim history.txt back to its tail once it grows past the cap, so the
+    // append-only log stays bounded and reboots keep restoring newest lines.
+    void compact_history();
     void save_variables();
     void load_variables();
 
