@@ -58,6 +58,22 @@ The calculator is feature-complete as a graphing calculator and has a working
 CAS. Programming — an app framework with MicroPython — is planned and not yet
 started, which is why [chapter 15](guide/15-programming.md) is a placeholder.
 
+## Found a bug, or want something?
+
+Please open an issue:
+[github.com/moodoki/graphite_picocalc_gc/issues](https://github.com/moodoki/graphite_picocalc_gc/issues).
+
+For a bug, the report form asks for three things, and they are the three that
+every hardware bug in this project has needed: **which board** (the two differ
+in processor, memory and floating-point hardware, and bugs have appeared on one
+and not the other), **which firmware version**, and **the exact expression** you
+typed. If the device rebooted on its own, the next boot prints a `fault:` line
+naming the address — that one line is worth more than any description.
+
+Intermittent is a real answer, not a reason to stay quiet. One bug in this
+project showed up on roughly 8 runs in 30 and looked perfectly correct when
+tried once.
+
 ## What this is not
 
 This is the user guide. Developer material — phase contracts, the decision log,

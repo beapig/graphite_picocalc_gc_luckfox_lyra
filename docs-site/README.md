@@ -103,8 +103,14 @@ workflow file with "Unrecognized named-value: 'secrets'".
 5. Re-run (or wait for) the `docs` workflow — the `publish-wiki` job
    will pick it up automatically.
 
-Until step 4 is done, wiki publishing stays manual (see above) — this is
-expected, not a bug.
+**Done 2026-08-10**: the `WIKI_TOKEN` secret is configured and the wiki
+publishes automatically on every push to `main` that touches `docs-site/`.
+The manual route above still works and is the fallback if the token expires —
+which it will, deliberately: the token is a full repo-write credential, since
+GitHub has no wiki-only permission, so it carries an expiry rather than living
+forever. When it lapses the `Publish wiki` job goes red on `main` and the wiki
+simply stops updating; nothing is lost, and the fix is to regenerate the token
+and update the secret.
 
 ## Offline bundle
 
