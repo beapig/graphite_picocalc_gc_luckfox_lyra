@@ -139,4 +139,22 @@ The HAL wraps C drivers vendored from Coyote OS (PicoCalc calculator firmware). 
 - `src/config.hpp` — compile-time configuration, board detection
 
 Related handoff notes: `docs/notes/next-bench-session.md` (deferred hardware
-bench work), `docs/notes/wishlist.md` (desired-but-unplanned features).
+bench work), `docs/notes/wishlist.md` (historical — the backlog it used to hold
+now lives in GitHub Issues).
+
+## The backlog lives in GitHub Issues
+
+Open work is tracked as issues, not in files. At the start of a session, after
+reading `next-session.md`, run:
+
+```sh
+./scripts/gh-issues.py     # writes docs/notes/issues.local.md (gitignored)
+```
+
+That mirrors every open issue with its full body, in the shape `wishlist.md`
+used, so the backlog is readable without a network round-trip per query. It is
+**one-way** — edit issues on GitHub and re-run; nothing writes back.
+
+What belongs where is settled in `docs/notes/issue-tracking.md`, and the test is
+**could someone close this?** If not, it is a record and stays in the repo:
+`decisions.md`, the phase specs, `worklog.md`, retros and measurements all stay.

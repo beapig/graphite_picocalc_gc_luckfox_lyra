@@ -1,0 +1,115 @@
+name: Bug report
+description: Something the calculator gets wrong, crashes on, or refuses to do
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. The three fields below are required because
+        every hardware bug this project has had needed all three to
+        reproduce: which board, which firmware, and the exact input.
+
+        If the device rebooted on its own, see the **Hard fault** field at
+        the bottom — the message printed on the next boot names the fault
+        address and is usually the single most useful thing in the report.
+
+  - type: dropdown
+    id: board
+    attributes:
+      label: Board
+      description: >
+        Both are supported and they differ in core, RAM and floating-point
+        unit. Several bugs have reproduced on one and not the other, so
+        "which one" is genuinely load-bearing.
+      options:
+        - Pico 1 H (RP2040)
+        - Pico 2 H (RP2350)
+        - Both
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Firmware version
+      description: >
+        Shown on the diagnostics screen (Home → F6). A release tag like
+        `v0.4.0`, or a commit SHA if you built it yourself.
+      placeholder: v0.4.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: What did you type?
+      description: >
+        The exact expression or key sequence. Copy it character for
+        character rather than describing it — spacing, parentheses and
+        which minus sign you used have all mattered before.
+      placeholder: |
+        det((([A]*[A])+[A])*[A])
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect, and what happened instead?
+      placeholder: |
+        Expected: 4
+        Got: -4
+    validations:
+      required: true
+
+  - type: dropdown
+    id: consistency
+    attributes:
+      label: Does it happen every time?
+      description: >
+        Please try it several times before answering. One bug in this
+        project appeared on roughly 8 runs in 30 and looked correct when
+        typed once — intermittent is a real and useful answer.
+      options:
+        - Every time
+        - Most times
+        - Occasionally
+        - Only happened once
+    validations:
+      required: true
+
+  - type: textarea
+    id: modes
+    attributes:
+      label: Relevant modes
+      description: >
+        From the MODE screen (F4), if they might matter: angle (RAD/DEG),
+        number mode (REAL / a+bi / r∠θ), display format, graph mode.
+        Number mode in particular used to select between different
+        evaluators, and has hidden bugs before.
+      placeholder: DEG, a+bi
+    validations:
+      required: false
+
+  - type: textarea
+    id: fault
+    attributes:
+      label: Hard fault message
+      description: >
+        If the device rebooted by itself, the *next* boot prints a line
+        like `fault: previous boot hard-faulted at pc=0x...`. Paste it
+        here — it names the faulting address and turns a guess into a
+        diagnosis.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Photos of the screen are welcome and often quicker than describing it.
+    validations:
+      required: false
