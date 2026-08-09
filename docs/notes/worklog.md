@@ -305,6 +305,91 @@ Still to verify on hardware:
 
 ---
 
+## 2026-08-10 — Housekeeping for a public repo: the README split, the backlog moved to Issues, the docs got written — and four documents disagreed with the firmware
+
+No firmware changed. The repo went **public**, and everything below is what that
+took.
+
+**Privacy and security pass.** All 229 commits scanned with `git log -p`, plus
+every tracked file and the CI config. No credentials, no keys, no oversized or
+deleted blobs, and nothing gitignored was ever committed. One real finding: the
+generated bitmap headers in `src/gfx/fonts/` are derived works of the fonts they
+were rasterized from but sat inside a tree `NOTICE.md` declared MIT wholesale.
+They now carry their own table and their own licences — which matters because the
+*default* build ships Terminus, so that is OFL 1.1 with a Reserved Font Name on
+the default firmware. CI got `permissions: contents: read` at workflow level,
+since fork pull requests start running the moment a repo is public.
+
+**History rewritten.** 204 `Co-Authored-By` trailers and **116 `Claude-Session:`
+URLs** removed across 238 commits — the session URLs were the user's catch, not
+something the first pass looked for. Run on a mirror clone first and validated
+there; the check that mattered was that **every commit's tree hash is identical
+before and after**, across all refs, so only messages changed. All 6 annotated
+tags and 12 branches preserved, and all 6 releases survived with their 12 `.uf2`
+assets intact — later confirmed by downloading v0.4.0's binaries and diffing them
+byte-for-byte against pre-rewrite backups.
+
+**README 357 -> 132 lines**, with the detail moved out to `FEATURES.md`,
+`USAGE.md`, `ROADMAP.md` and `CONTRIBUTING.md` rather than deleted.
+
+**The backlog moved to GitHub Issues** (`docs/notes/issue-tracking.md`), framed
+as *record versus queue* with one test: could someone close this? The ten
+`wishlist.md` Active items were migrated **by hand**, because each carried a line
+saying when it was raised and what raised it, and a bulk import drops exactly
+that. Four more issues cover work that had nowhere to live, including D53's root
+cause. `scripts/gh-issues.py` mirrors it all back into a gitignored local file in
+the wishlist's own shape. Labels were chosen from how this project has actually
+failed — `hw-pending` because D48 and D53 were both correct on the host and wrong
+on hardware.
+
+**The guide got written.** All fifteen `docs-site/guide/` stubs replaced with real
+prose, plus a real `reference/error-messages.md` from the error strings in `src/`,
+and the study guide's first chapter — `internals/13-what-went-wrong.md`, four bugs
+start to finish, wrong explanations included. A landing page, GitHub Pages, and
+the wiki are all live and auto-publishing.
+
+### The part worth keeping: four documents disagreed with the firmware
+
+Writing user docs meant checking every claim, and the checking kept failing.
+
+**A single commit on 2026-07-18 changed two things** — the F-key layout
+(`home_screen.cpp:941`, "Global F-key scheme, TI-84-shaped") and case-sensitivity
+of identifiers (`engine.cpp:24`, "was blanket-lowercased before"). The README was
+never updated for either. `USAGE.md` was then written *from the README*, so it
+inherited both: `F3` documented as graph when it is mode, `F4` as mode when it is
+trace, `F5` as help when it is graph, and a `F9` that **does not exist in this
+firmware**. Variables were documented as `A-Z` when they are lowercase `a-z`, so
+the store example `2->A` could not work.
+
+Four files carried it — README, `FEATURES.md`, `USAGE.md`, and
+`homepage/index.html`, the last found two days later while adding a screenshot.
+
+**The generated reference pages were right the whole time.** They come from
+`src/apps/help_screen.cpp` and `src/math/catalog.cpp` and are drift-checked in
+CI, which is exactly the property the prose lacked. The lesson is not "check your
+work" — it is that **a derived document is not a source**, and the guide is now
+written against the generated pages rather than against prose.
+
+Two more found the same way: the on-device help lists a *subset* of the typed
+commands the home screen accepts (missing `mat`, `cas`, `solve`, `const`,
+`settings`, `plots`, `analyze`), and `gen-doc-reference.py` was leaking octal
+escapes into published pages — the help text reaches the font's math glyphs
+through escapes like `\214`, so a wiki page literally read `2\2142` where it
+should read `2√2`.
+
+The confirmation arrived by accident: the screenshot added at the end of the
+session shows the device's own softkey bar reading
+`1:Y= 2:WIN 3:MODE 4:TRC 5:TBL 6:CALC` — the corrected map, attested by the
+hardware rather than by reading source.
+
+**Verification discipline note.** The first automated wiki publish reported
+success while logging "Wiki already up to date" — it had cloned, found identical
+content from an earlier manual sync, and never exercised a push, and a public
+wiki clones without auth. A green check proved nothing. It was re-tested with a
+real content change and confirmed by the wiki HEAD moving under a
+`github-actions[bot]` commit.
+
+
 ## 2026-08-09 (last) — Phase 5.2 task 5.2.12: on-device verification, both boards. **The measurement plan was wrong and the tighter board found two bugs** (D52, D53)
 
 The phase's last task, and it did what a hardware pass is for: it invalidated the
