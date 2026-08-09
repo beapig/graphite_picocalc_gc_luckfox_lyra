@@ -132,7 +132,9 @@ illustrated or example-driven the way a workbook chapter should be.
 - Repo settings: Pages source = GitHub Actions (one-time manual toggle,
   not something a workflow file can do itself).
 - No custom domain needed initially; the default
-  `<user>.github.io/picocalc_gc/` is fine for a personal project.
+  `moodoki.github.io/graphite_picocalc_gc/` is fine for a personal
+  project (the GitHub repo is `moodoki/graphite_picocalc_gc` — note this
+  differs from the local directory name `picocalc_gc`).
 
 ## What NOT to do in v1
 
@@ -158,6 +160,47 @@ Nothing here blocks earlier phases, though, and the `getting-started/` +
 early `guide/` chapters (chapters 1–13, everything already shipped) could
 reasonably be drafted earlier as a low-priority background task if there's
 appetite — there's no dependency forcing it to wait.
+
+---
+
+## 2026-08-03 — shape superseded; seeding started on `docs/site`
+
+This plan's *goal* still stands, but the shape sketched above (MkDocs
+Material as the primary/only target, hosted on GitHub Pages) has been
+superseded by a broader requirement: **offline-readable documents AND a
+GitHub wiki**, both generated from one plain-markdown source, with a
+possible future MkDocs/Pages site as a third, optional consumer of the
+same source rather than the only output.
+
+What changed concretely:
+
+- Source lives in `docs-site/` as plain CommonMark + `$...$` math — no
+  MkDocs-specific syntax (no admonitions, no `pymdownx` blocks, no
+  `{: attrs}`) — so the same files render acceptably in a GitHub wiki,
+  through pandoc, and in MkDocs, rather than being written against one
+  tool's extensions.
+- `docs-site/SUMMARY.md` (mdBook-style nested link list) is the single
+  nav source of truth; no `mkdocs.yml` exists yet.
+- Three generators in `scripts/`: `gen-doc-reference.py` (firmware
+  source → `docs-site/reference/*.md`, committed, drift-checked in CI),
+  `gen-wiki.sh` (→ a flat `build/wiki/` tree ready to push to the
+  repo's `.wiki.git` remote), and `gen-offline.sh` (→ a concatenated
+  markdown bundle in `build/offline/`, plus a self-contained HTML and a
+  PDF when `pandoc` is available).
+- `.github/workflows/docs.yml` validates, checks reference-doc drift,
+  builds the offline bundle as a CI artifact, and has a wiki-publish
+  job gated on a `WIKI_TOKEN` secret (the default `GITHUB_TOKEN` can't
+  push to a repo's wiki).
+
+Seeding (scaffold, stub chapters, generators, CI wiring — no guide prose
+yet) started on branch `docs/site`, branched from `main`, on this date.
+The chapter list in "Proposed structure" above needed adjusting to match
+what's actually shipped (Phase 4D's sequence graphing, zoom family, etc.
+— see `docs-site/SUMMARY.md` for the current 15-chapter guide order) and
+CAS/Phase 6 content is still out of scope until those phases ship, per
+this plan's original "what NOT to do" section.
+
+---
 
 ## 2026-08-10 — audience split widened to four facets
 

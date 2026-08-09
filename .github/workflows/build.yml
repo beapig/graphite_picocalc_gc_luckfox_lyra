@@ -105,7 +105,7 @@ jobs:
           python-version: '3.11'
       - name: Validate markdown
         run: |
-          python3 scripts/validate_md.py docs/ AGENTS.md \
+          python3 scripts/validate_md.py docs-site/ docs/ AGENTS.md \
             README.md FEATURES.md USAGE.md ROADMAP.md CONTRIBUTING.md NOTICE.md
       # A malformed issue form is not reported by GitHub — the template just
       # stops appearing in the chooser — so it has to be caught here.
