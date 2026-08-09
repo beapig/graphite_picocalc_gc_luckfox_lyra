@@ -8,6 +8,19 @@ Before anything else: [README](README.md#quick-start-building-from-source) for t
 [docs/dev-environment.md](docs/dev-environment.md) for the full toolchain
 setup (macOS Apple Silicon is the developed-on platform; CI builds on Ubuntu).
 
+## Finding something to work on
+
+Open work lives in [GitHub Issues](https://github.com/moodoki/graphite_picocalc_gc/issues).
+Issues carry three axes of label: a `type:`, an `area:` mirroring `src/`, and
+where it applies `hw-pending` (cannot be verified without a board on the desk)
+or `board:pico1` / `board:pico2` (reproduces on one target only). Milestones are
+phases.
+
+If you work on this regularly, `./scripts/gh-issues.py` mirrors the whole
+backlog into a gitignored local file so you can read it offline. What is tracked
+as an issue versus what stays in the repo is settled in
+[docs/notes/issue-tracking.md](docs/notes/issue-tracking.md).
+
 ## Ground rules
 
 - **Both boards, always.** Every change must build for `pico` and `pico2`. They
