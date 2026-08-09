@@ -150,7 +150,10 @@ def validate(path: Path) -> int:
 
         s = line.strip()
         if s.startswith("|") and s.endswith("|"):
-            cols = s.count("|") - 1
+            # An escaped pipe (\|) is cell *content*, not a column separator —
+            # it is how you put a literal "|" in a table. Drop those before
+            # counting, or a legitimate row reads as having extra columns.
+            cols = s.replace("\\|", "").count("|") - 1
             if not in_table:
                 in_table = True
                 table_cols = cols
