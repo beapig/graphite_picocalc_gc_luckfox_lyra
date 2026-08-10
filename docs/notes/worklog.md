@@ -305,6 +305,45 @@ Still to verify on hardware:
 
 ---
 
+## 2026-08-10 (later) — Wiki page links pointed at raw markdown instead of rendered pages — generator fixed
+
+Docs-tooling only; no firmware changed.
+
+**Root cause.** `scripts/gen-wiki.sh` flattens `docs-site/**/*.md` into
+single-file GitHub-wiki page names (e.g. `Getting-Started-Build-and-Flash.md`)
+— correct as the on-disk filename for the wiki git repo, but the script was
+also reusing that same `.md`-suffixed string as the **link target** inside
+`[text](target)` links, both in `rewrite_links()`'s in-page cross-links and in
+the generated `_Sidebar.md`. GitHub wikis are served by Gollum at
+extension-less URLs (`/wiki/Page-Name`); a link ending in `.md` resolves to
+the raw file blob instead of the rendered page — exactly the reported
+symptom (wiki nav going to raw markdown).
+
+**Fix.** `rewrite_links()`'s `repl()` closure and the `_Sidebar.md` generator
+loop both now call `.removesuffix(".md")` on the link target before writing
+it; the on-disk output filename (`out_path`, `flat_map` values) is untouched
+and still carries `.md`. `docs-site/README.md`'s "Wiki flattening rule"
+section corrected to match — it previously said "same rule applied to the
+link target," which was no longer true.
+
+**Verified locally**: regenerated `build/wiki/` — `_Sidebar.md` and in-page
+links now read `[Home](Home)`, `[Build and flash](Getting-Started-Build-and-Flash)`
+etc., no `.md` suffix; on-disk filenames unchanged; external URLs
+(screenshots, GitHub issue links) untouched by the rewrite, since the regex
+only rewrites targets found in `flat_map`. `python3 scripts/validate_md.py
+docs-site/ docs/ AGENTS.md README.md` still reports 0 issues — that validator
+only checks `docs-site/` source, not generated `build/wiki/`, so it was never
+going to catch this class of bug.
+
+**Not yet closed — the published wiki still needs to be checked.** This fixes
+the generator only. The wiki pages published earlier today (see the entry
+below) still carry the broken links until the next push to `main` re-runs
+`publish-wiki`. That job has no path filter on its trigger and rebuilds
+`build/wiki/` from scratch every run, so this commit's push should still fire
+it and overwrite the previously-published pages — but there is no local way
+to verify a `WIKI_TOKEN`-gated push. Follow-up: confirm a live wiki page in
+the browser once this reaches `main`.
+
 ## 2026-08-10 — Housekeeping for a public repo: the README split, the backlog moved to Issues, the docs got written — and four documents disagreed with the firmware
 
 No firmware changed. The repo went **public**, and everything below is what that

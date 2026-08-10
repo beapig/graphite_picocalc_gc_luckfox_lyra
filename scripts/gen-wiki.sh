@@ -116,7 +116,13 @@ def rewrite_links(text: str, from_rel: Path) -> str:
         flat = flat_map.get(rel_target)
         if flat is None:
             return m.group(0)
-        new_target = flat + (f"#{anchor}" if anchor else "")
+        # GitHub wikis (Gollum) serve pages at extension-less URLs
+        # (/wiki/Page-Name). A link that keeps ".md" doesn't resolve to
+        # the rendered page — it hits the raw file blob instead. Strip
+        # it here; flat_map values keep ".md" because that's still the
+        # correct on-disk filename for the wiki git repo.
+        link_target = flat.removesuffix(".md")
+        new_target = link_target + (f"#{anchor}" if anchor else "")
         return f"{prefix}{new_target}{suffix}"
 
     return link_re.sub(repl, text)
@@ -149,7 +155,7 @@ for line in summary.splitlines():
         except Exception:
             flat = None
         if flat:
-            sidebar_lines.append(f"{bullet} [{text}]({flat})")
+            sidebar_lines.append(f"{bullet} [{text}]({flat.removesuffix('.md')})")
         else:
             sidebar_lines.append(f"{bullet} {text}")
     elif plain:

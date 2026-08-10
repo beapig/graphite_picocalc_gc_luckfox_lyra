@@ -54,9 +54,14 @@ flattens `docs-site/**/*.md` with this deterministic rule:
   - `guide/01-basic-calculations.md` → `Guide-01-Basic-Calculations.md`
   - `reference/function-catalog.md` → `Reference-Function-Catalog.md`
 - Relative markdown links between pages are rewritten to point at the
-  flattened names (same rule applied to the link target).
+  flattened names, **with the `.md` suffix stripped** — GitHub wikis
+  (Gollum) serve pages at extension-less URLs (`/wiki/Page-Name`), and a
+  link ending in `.md` resolves to the raw file blob instead of the
+  rendered page. The `.md` suffix is kept only on the filename written
+  to disk, never on a link target.
 - A `_Sidebar.md` is generated from `SUMMARY.md`'s structure, linking to
-  the flattened names, so the wiki gets a persistent nav sidebar.
+  the flattened (extension-less) names, so the wiki gets a persistent
+  nav sidebar.
 
 ## Publishing to the wiki
 

@@ -1,10 +1,33 @@
 # Start here — next session
 
-**Last session:** 2026-08-10 — **the repo went public.** No firmware changed.
-Privacy/security pass, history rewritten to drop 204 AI co-author trailers and
-116 session URLs, README split into four root docs, the backlog moved to GitHub
-Issues, the user guide written, and a landing page + wiki published and
-auto-deploying. Full narrative in [worklog.md](worklog.md).
+**Last session:** 2026-08-10 (later) — **wiki navigation links fixed.**
+Docs-tooling only, no firmware changed. `scripts/gen-wiki.sh` was linking to
+`Page-Name.md` instead of `Page-Name` in both in-page cross-links and
+`_Sidebar.md`; GitHub wikis (Gollum) serve extension-less URLs, so every wiki
+nav link resolved to a raw markdown blob instead of the rendered page — the
+reported symptom. Fixed in the generator (`docs-site/README.md`'s flattening-
+rule doc corrected to match) and verified locally against a regenerated
+`build/wiki/`. Full narrative in [worklog.md](worklog.md).
+
+> ## Open follow-up: confirm the published wiki actually got the fix
+>
+> This session's change only touched the generator (`scripts/gen-wiki.sh`,
+> `docs-site/README.md`) — no file under `docs-site/**` content changed, so
+> nothing forces a republish by content diff. The `publish-wiki` CI job has
+> **no path filter** on its `push: branches: [main]` trigger and rebuilds
+> `build/wiki/` from scratch on every run, so this commit's push to `main`
+> should still fire it and overwrite the previously-published (broken-link)
+> pages. There is no local way to verify a `WIKI_TOKEN`-gated push —
+> **check a live wiki page in the browser** once this merges (e.g. the Home
+> page's link to "Build and flash") to confirm the target no longer ends in
+> `.md`.
+
+**Previous session:** 2026-08-10 (earlier) — **the repo went public.** No
+firmware changed. Privacy/security pass, history rewritten to drop 204 AI
+co-author trailers and 116 session URLs, README split into four root docs,
+the backlog moved to GitHub Issues, the user guide written, and a landing
+page + wiki published and auto-deploying. Full narrative in
+[worklog.md](worklog.md).
 
 > ## Read this before touching user-facing docs
 >
