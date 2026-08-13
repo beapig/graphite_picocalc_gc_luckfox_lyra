@@ -19,8 +19,10 @@ a strict week-by-week sequence the way Phases 1–5 do.
 **End state**: the calculator has an app launcher distinct from its fixed
 calculator screens; MicroPython programs can be written, saved, and run
 on-device with access to the calculator's math/graph/matrix/complex/CAS
-functions; and the platform is positioned to add future non-calculator
-apps without needing a new phase carved out each time.
+functions; a plain-text Notepad app ships alongside it as the app
+framework's other consumer of the same shared editing widget (§3.5,
+D54); and the platform is positioned to add future non-calculator apps
+without needing a new phase carved out each time.
 
 **Status**: Specced, not started. This document replaces what was Phase 4
 sub-phase 4E (MicroPython) — see
@@ -39,20 +41,116 @@ before sizing 6B.
 
 ---
 
+## 0. Pre-flight checklist — before starting Phase 6
+
+Gathered 2026-08-13 from this document's own open items plus what was
+already on record elsewhere (`pre-phase5-review.md`, GitHub issue #27).
+Not a task list for Phase 6 itself — these are the things that should
+be checked, decided, or built *before* (or right at the start of) 6A/6B
+work, so scoping doesn't rest on stale numbers or unconfirmed hardware
+assumptions.
+
+### 0.1 The one that actually gates 6B — Pico 1 SRAM headroom
+
+**Re-measure before sizing 6B's 48 KB heap. Do not trust either
+existing number.** `pre-phase5-review.md` (2026-08-02, **before** Phase
+5 CAS and Phase 5.2 landed) measured **~12 KB spare** after the shared
+scratch arena, and explicitly warned that number "must still absorb
+Phase 5 CAS static SRAM... and Phase 6 6A framework static... that land
+before the heap." The `picocalc-phase5.2-state` memory separately puts
+it at **~5 KB → ~10 KB** post-5.2, "still not comfortable." Those two
+numbers come from different points in the codebase's history and
+disagree with each other — neither should be trusted as current. With
+CAS, 5.2, and this session's 6A additions (the shared text-editing
+widget §3.5, the generalized file browser §3.7) all landing before the
+lazily-allocated MicroPython heap in the actual boot sequence, **one
+fresh `size-report.sh` measurement on current `main`, at the point 6A's
+static footprint is in place, is a precondition for sizing 6B** — not
+a nice-to-have. If it comes in under 56 KB free (48 KB heap + 8 KB
+C-stack), Risk 6's already-contemplated lever (drop the heap 48→40 KB)
+needs to be invoked *before* 6B is scoped, not discovered mid-6B.
+
+### 0.2 Cross-phase blocker already on the issue tracker
+
+- **Re-verify 6B's `calc` bindings against the post-5.2 unified
+  evaluator** — [issue #27](https://github.com/moodoki/graphite_picocalc_gc/issues/27).
+  §4.2's bindings were specced against the evaluator Phase 5.2 replaced.
+  Explicitly recorded as blocking 6B's scoping, not just a nice-to-fix.
+
+### 0.3 Hardware verification spike (one session covers both)
+
+Both of these are explicitly gated on physical hardware, not
+schematic-reading, and share the same "flash something, reboot, watch
+what happens" session — do them together:
+
+- **P6-5**: does this project's existing reset call actually land back
+  in `uf2loader`'s menu, or bypass it (as `reset_usb_boot()` is
+  suspected to)? Confirm what `uf2loader` does at the flash level
+  before committing to depending on it.
+- **P6-14**: does a real power-cycle actually deassert `PICO_EN` (a
+  true POR on the Pico), i.e. does `watchdog_caused_reboot()` read
+  `false` after a physical power-cycle? Schematic evidence points that
+  way; only hardware confirms it.
+- Both feed §3.4's own stated feasibility spike (parse one real `.uf2`,
+  write it to a scratch flash region, reboot into it successfully,
+  confirm the untouched-bootloader recovery path actually recovers) —
+  this was always going to need a hardware session; P6-5/P6-14 are
+  two more questions to answer inside that same session, not separate
+  trips.
+
+### 0.4 Small build/config additions needed (no hardware required, just not done yet)
+
+- **A version/build identifier** — `pico_set_program_version` or
+  equivalent. Confirmed zero hits anywhere in `CMakeLists.txt` today.
+  Needed by D59 (§3.4's self-snapshot mismatch check) and generically
+  useful (this project currently has no way to ask its own firmware
+  "what version is this" at all).
+- **An exposed build-size symbol** — linker-provided or baked into a
+  fixed flash offset at build time. Also needed by D59; also doesn't
+  exist yet.
+- **MicroPython embed build must include `json`** — confirmed required
+  by §4.6 entry 1's periodic-table walkthrough; 6B.1's acceptance
+  criteria already reflects this, listed here so it isn't only visible
+  three sections deep.
+
+### 0.5 Open policy calls (not hardware-gated, just not decided)
+
+- **P6-13**: is editing the vendored `pwm_sound.h`/`.c` acceptable for
+  the sound demo's minimal tone extension, given D-prelude-1 treats
+  `drivers/` as read-only? A precedent question, answerable at a desk,
+  no spike needed.
+- **P6-12**: the sensor catalog — your own explicit TODO, still open.
+  Doesn't block 6A/6B, only blocks finalizing §4.6 entry 2.
+
+### 0.6 Already resolved this session — listed so they aren't re-litigated
+
+D54 (editor generalized into 6A, Notepad added as 6C), D55 (file
+management scoped in, `FilesScreen` generalized in place), D56 (6.1
+convenience scripts: abort on error, `/picocalc/scripts/`), D57
+(MicroPython heap lazily allocated), D58 (launcher: both entry points,
+`ESC`-only exit routing), D59 (return-to-calculator: fetch-fresh,
+lazy self-snapshot on launcher entry). Full detail in
+[decisions.md](../notes/decisions.md).
+
+---
+
 ## 1. Overview and phasing within Phase 6
 
 | Sub-phase | Content | Depends on |
 |---|---|---|
-| 6A: App framework | Launcher screen, app registration/lifecycle, screen-ownership handoff | Phase 4 |
-| 6B: MicroPython (first base app) | Embedded interpreter, `calc` module bindings, program editor, SD card scripts | 6A |
-| 6C+: future apps (unscoped) | Candidates in §9 — additional apps riding the 6A framework | 6A |
+| 6A: App framework | Launcher screen, app registration/lifecycle, screen-ownership handoff, shared text-editing widget (§3.5), generalized file browser incl. management (§3.7) | Phase 4 |
+| 6B: MicroPython (first base app) | Embedded interpreter, `calc` module bindings, program editor (thin wrapper on 6A's widget), SD card scripts | 6A |
+| 6C: Notepad (first concrete future app) | Thin wrapper on 6A's shared text-editing widget, `.txt` files, no execution | 6A |
+| 6C+: further future apps (unscoped) | Remaining candidates in §9 — additional apps riding the 6A framework, plus §9.3's home-screen convenience scripts (candidate 6.1, not app-launcher-shaped, reuses Phase 5.1's `submit_line()` instead) and §9.4's PCM sampler audio engine (candidate 6.2, real driver work, spun off from the §4.6 sound demo) | 6A (loosely) |
 | Release engineering (unscoped, can run in parallel) | Docs site ([docs-site-plan.md](../notes/docs-site-plan.md)), versioned firmware releases | none |
 
-Unlike Phases 1–5's strictly ordered sub-phases, once 6A exists, 6B and
-any future 6C+ app have no dependency on each other — pick whichever is
-most wanted next, or work on more than one across sessions without
-worrying about blocking order. Release engineering doesn't even need 6A;
-it could start any time (see §9).
+Unlike Phases 1–5's strictly ordered sub-phases, once 6A exists, 6B, 6C,
+and any further 6C+ app have no dependency on each other — pick
+whichever is most wanted next, or work on more than one across sessions
+without worrying about blocking order. Notepad (6C) in particular only
+needs 6A, not 6B — it could ship before MicroPython if that were ever
+wanted (D54). Release engineering doesn't even need 6A; it could start
+any time (see §9).
 
 ### 1.1 Why an app framework at all, and why before MicroPython
 
@@ -131,23 +229,35 @@ catalog driven by the same table the parser registers from"*).
 
 ### 3.2 Launcher screen
 
-Entered from Home via a new softkey or typed command (`apps`/`app`,
-mirroring the `lists`/`stats` typed-command convention from Phase 3).
-`UP`/`DOWN` selects, `ENTER` launches. This is intentionally the
-simplest possible menu — a vertical list, no icons grid, no categories —
-because with one app (MicroPython) at launch there's nothing to organize
-yet. Revisit the layout once a second or third app exists (§9).
+**Resolved 2026-08-13 (D58, P6-3): both.** Entered from Home via **a
+dedicated softkey and a typed command** (`apps`/`app`, mirroring the
+`lists`/`stats` typed-command convention from Phase 3) — not
+either/or, both entry points ship. `UP`/`DOWN` selects, `ENTER`
+launches. This is intentionally the simplest possible menu — a
+vertical list, no icons grid, no categories — because with one app
+(MicroPython) at launch there's nothing to organize yet. Revisit the
+layout once a second or third app exists (§9).
+
+If §3.4's compiled-app stretch goal is ever built, its `on_activate`
+is also where P6-6's version-stamp check (and, on mismatch, the
+firmware self-snapshot to `/picocalc/firmware.uf2`) hooks in — no new
+lifecycle needed, just an addition to a hook 6A.2 already has.
 
 ### 3.3 Screen-ownership handoff
 
 Apps take over the full screen the same way any existing full-screen
 `apps/*` module does (matrix editor, stats screen, etc.) — there's no
 new windowing/compositing model. The only new behavior is *how you get
-there*: through the launcher rather than a fixed softkey, and *how you
-leave*: a consistent "exit to launcher" convention (e.g. `ESC` returns to
-the launcher, not directly to Home, so a user who came from the launcher
-doesn't lose their place). `HOME` still short-circuits to the home
-screen from anywhere, matching every other screen's existing behavior.
+there*: through the launcher (§3.2's softkey or command), and *how you
+leave*: a consistent "exit to launcher" convention — `ESC` returns to
+the launcher, not directly to Home, so a user who came from the
+launcher doesn't lose their place. **Resolved 2026-08-13 (D58, P6-4):
+`ESC` only.** `HOME` keeps its existing system-wide behavior unchanged
+— it still short-circuits straight to the home screen from any screen,
+apps included, the same as every other screen today. Two distinct
+keys, two distinct destinations: `ESC` is the "step back" convention,
+`HOME` is the global "start over" convention, and apps don't get a
+special case on the latter.
 
 ### 3.4 Compiled app launcher entries (`uf2loader`-based, **stretch — not core 6A scope**)
 
@@ -183,11 +293,15 @@ on SD instead of a `.py` entry script. Selecting it in the launcher:
    the freshly written app, with no interactive menu step, because the
    *selection* already happened in our own launcher.
 4. **Returning to the calculator** is the same operation run in reverse:
-   re-flash the calculator's own `.uf2` into that region and reset. Apps
+   re-flash the calculator's own image into that region and reset. Apps
    built from this project's own template know how to do this (a `calc`
    module binding, analogous to 6B's other bindings); a completely
    foreign `.uf2` would not, and would rely on the hold-a-key-at-boot
-   fallback below instead.
+   fallback below instead. **Resolved 2026-08-13 (D59, P6-6): fetched
+   fresh from a known SD path** (`/picocalc/firmware.uf2`, matching the
+   top-level-singleton-file convention `graphstate.dat` already uses),
+   not bundled per-app — see P6-6 for the full mechanism (self-snapshot,
+   checked lazily on launcher entry).
 
 **What this does and doesn't remove, versus §9.1's in-process approach**:
 removes the relocator/PIC problem (#2) and the ABI/symbol-table
@@ -207,6 +321,44 @@ the untouched bootloader" — never "the device won't boot at all." This
 constraint should be treated as non-negotiable in any implementation,
 not an optimization.
 
+**A power cycle recovers to the calculator automatically — even from a
+hung third-party app (2026-08-13, P6-14)**: the mainboard's POWER
+section (`clockwork_Mainboard_V2.0_Schematic.pdf`) shows `U101`, an
+**AXP2101** PMIC, with the physical power button wired into its
+`PWRON` pin — a *soft* power sequence, not a raw battery-voltage cutoff
+— and a dedicated `PICO_EN` line gating a regulator (`U102`) whose
+output is named `PICO_VSYS`, the Pico module's own supply rail. That
+topology strongly suggests a real power-off fully removes the Pico's
+VDD, making the next power-on a genuine hardware power-on reset (POR)
+— indistinguishable from unplugging a standalone Pico.
+
+If confirmed on hardware (the actual off-sequencing lives in the STM32
+keyboard MCU's firmware, not something this project's source controls
+or that schematic-reading alone can confirm — flagged as **P6-14**),
+this gives a clean mechanism with **no app cooperation required**: use
+`watchdog_reboot()` (not a generic reset) for the deliberate
+launch-into-app handoff in step 3 above, and have the bootstrap check
+`watchdog_caused_reboot()` on every boot — **true → boot the app slot;
+false (a real power cycle, including a POR from a hung app forcing the
+user to physically power-cycle) → always boot the calculator,
+regardless of what's sitting in the app slot.** Because this is a
+bootstrap decision keyed on hardware reset-reason, not something the
+app itself has to implement or call back into, it works uniformly for
+**every app, including completely foreign third-party ones that know
+nothing about this project's `calc` return binding.**
+
+This also meaningfully improves the safety-net paragraph above: a
+hung/misbehaving app's *common-case* recovery becomes "just power-cycle
+it," not "remember to hold the boot key" — hold-a-key stays as the
+fallback only for the rarer case of a corrupted app-slot write itself.
+
+**Feeds into P6-5, doesn't resolve it**: this reset-reason check needs
+to run as custom decision logic very early in boot — a step that leans
+toward the self-sufficient option, since a generic third-party
+bootloader wasn't designed with this project's specific "app slot vs.
+calculator" concept and may not expose a hook for it. Not a resolution
+of P6-5, just a new consideration for whichever way it's decided.
+
 **Open questions before implementation**:
 
 - Does this depend on `uf2loader` being separately installed (as a
@@ -220,9 +372,13 @@ not an optimization.
   "Reboot to bootloader" MODE-screen entry likely calls
   `reset_usb_boot()`, which forces raw BOOTSEL/PC-flash mode and would
   bypass `uf2loader` entirely rather than returning to it).
-- Where does the calculator's own `.uf2` come from at "return" time —
-  bundled as a resource apps carry, fetched fresh from a known SD path,
-  or something else? Needs a small design pass, not assumed.
+- ~~Where does the calculator's own `.uf2` come from at "return"
+  time~~ — **resolved, see P6-6**: fetched fresh from
+  `/picocalc/firmware.uf2`, kept in sync by the running firmware
+  self-snapshotting there. Two prerequisites this codebase doesn't have
+  yet: an exposed build-size symbol, and a version/build identifier to
+  gate the write (`pico_set_program_version` or similar — not currently
+  set anywhere in `CMakeLists.txt`).
 
 **Rough estimate**: **~25–35 hrs**, gated by a feasibility spike first
 (parse one real `.uf2`, write it to a scratch flash region, reboot into
@@ -230,6 +386,128 @@ it successfully, confirm the untouched-bootloader recovery path actually
 recovers) — flash-write code should prove itself in isolation before the
 rest is built on top of it, the same "spike before committing" principle
 §9.1 recommends for anything touching a homegrown flash/loader path.
+
+### 3.5 Shared text-editing widget
+
+**Added 2026-08-13 (D54).** §4.3's program editor was originally scoped
+as a single Python-specific screen. Nothing about line-numbered text
+editing — buffer, cursor, arrow-key navigation, insert/backspace/delete
+— is Python-specific, and §3.6's Notepad app is a second, concrete
+consumer of the same behavior. Per Risk 10's own guardrail ("expand only
+when a second app actually needs more"), that's now true, so the widget
+moves here rather than staying private to 6B.
+
+```cpp
+namespace ui {
+
+// Generic line-numbered text editor. Owns the buffer, cursor, and
+// arrow-key/insert/backspace/auto-indent behavior. Callers configure
+// everything app-specific: file extension and save directory, which
+// softkeys appear and what they do, and whether a character triggers
+// auto-indent on ENTER.
+struct TextEditorConfig {
+    const char* save_dir;       // e.g. "/picocalc/programs" or "/picocalc/notes"
+    const char* file_ext;       // e.g. ".py" or ".txt"
+    char auto_indent_after = 0; // 0 = disabled; ':' for Python
+    bool has_run_key = false;   // F1:RUN shown/wired only if true
+    void (*on_run)(const char* path) = nullptr; // called with saved path
+};
+
+class TextEditorWidget {
+public:
+    void configure(const TextEditorConfig& cfg);
+    void on_activate();                       // load last buffer, or blank
+    bool on_key(const platform::KeyEvent& ev); // nav/edit/softkeys
+    void render(gfx::Framebuffer& fb);
+    // F3:LOAD opens the file browser (§3.7) scoped to save_dir/file_ext
+    // and returns the chosen path here.
+};
+
+}  // namespace ui
+```
+
+Two screens each own an instance, configured differently: §4.3's Python
+program editor (`has_run_key = true`, `.py`, auto-indent after `:`,
+`on_run` calls `PythonInterpreter::exec_file()`) and §3.6's Notepad
+(`has_run_key = false`, `.txt`, no auto-indent). Syntax highlighting
+(§4.3's stretch goal) stays a Python-editor-only concern layered on top
+of the shared widget's render pass, not part of the widget's core.
+
+### 3.6 Notepad app
+
+**Added 2026-08-13 (D54).** First concrete 6C app — promoted out of
+§9.2's unscoped candidates because it's now near-free once §3.5 exists.
+A thin `TextEditorWidget` wrapper: `.txt` files under
+`/picocalc/notes/`, no `RUN` softkey, registered with `AppRegistry` as
+"Notepad". Depends only on 6A (§3.5 + the launcher), **not** 6B — it
+needs no MicroPython interpreter and nothing from Phase 5, so it isn't
+affected by issue #27's note that 6B's `calc` bindings need
+re-verifying against the post-5.2 evaluator.
+
+Notepad's `F3:LOAD` uses §3.7's generalized file browser in picker mode,
+scoped to `save_dir`/`file_ext` — same call §3.5's widget makes for the
+Python editor (D55 resolved this; see §3.7).
+
+### 3.7 Generalized file browser (D54 raised it, D55 scoped it in)
+
+`FilesScreen` (`src/apps/files_screen.cpp`) exists today but is a
+single-level, read-only diagnostic added 2026-07-18 (test-drive
+request) — hardcoded to `/picocalc`, no `ENTER`-to-descend into `[DIR]`
+rows, no picker calling convention, and `platform::Storage` has no
+`rename`/`delete_dir`. **D55: generalized in place** rather than
+duplicated — one component serves the standalone `Files` diagnostic,
+§3.5's widget `F3:LOAD`, and Notepad's `F3:LOAD`, in two modes:
+
+```cpp
+namespace apps {
+
+enum class FileBrowserMode { kBrowse, kPick };
+
+struct FileBrowserConfig {
+    FileBrowserMode mode = FileBrowserMode::kBrowse;
+    const char* start_dir = "/picocalc"; // kPick: e.g. save_dir from
+                                          // TextEditorConfig (§3.5)
+    const char* ext_filter = nullptr;    // kPick: e.g. ".py"; nullptr = no filter
+    // kPick only: called with the chosen file's full path. kBrowse
+    // never calls this — ENTER on a file is a no-op there (view only).
+    void (*on_picked)(const char* path) = nullptr;
+};
+
+class FileBrowserScreen : public ui::Screen {
+public:
+    void configure(const FileBrowserConfig& cfg);
+    // ... on_activate/on_key/render as today, plus:
+    // - ENTER on a [DIR] row descends; a bound key returns to parent
+    //   (tracks a path stack, capped depth — SD layout here is
+    //   shallow: /picocalc/{programs,notes,apps/<name>}).
+    // - Management, available in both modes: DEL (confirm-gated) calls
+    //   Storage::delete_file/delete_dir; a rename key reuses the
+    //   existing filename text-entry (same prompt §4.3's F4:NEW uses);
+    //   a new-folder key calls Storage::ensure_dir.
+};
+
+}  // namespace apps
+```
+
+`platform::Storage` gains two primitives to support management:
+
+```cpp
+// Renames/moves a file or directory. Returns false if the destination
+// exists or the source doesn't.
+bool rename_file(const char* old_path, const char* new_path) const;
+
+// Removes an empty directory. Returns false if it doesn't exist or is
+// non-empty — deliberately non-recursive (D55): emptying a populated
+// directory is a separate, explicit step, not a side effect of one
+// delete keypress.
+bool delete_dir(const char* path) const;
+```
+
+The standalone `Files` diagnostic entry point keeps its current
+behavior as `FileBrowserMode::kBrowse` with `start_dir = "/picocalc"` —
+D55 generalized the component, not the diagnostic's defaults — and
+gains navigation and management for free since it's the same code path
+§3.5/§3.6 call in `kPick` mode.
 
 ---
 
@@ -301,6 +579,12 @@ import calc
 
 # Expression evaluation
 result = calc.eval("2 + 3 * sin(pi/4)")
+# Numeric bracketed root-find on an arbitrary expression string — the
+# expression language's own solve(f,x,lo,hi) (D28, math::numeric_solve),
+# reachable through eval(). Prefer this over calc.solve (below) whenever
+# the equation isn't symbolically solvable (§4.6 entry 3, TVM): it takes
+# no named Y-slot, so it can't clobber the user's own Y1-Y7 graphs.
+i_rate = calc.eval("solve(pv+pmt*n+fv, n, 1e-6, 1)")
 
 # Variables
 calc.store("A", 42)
@@ -339,12 +623,21 @@ inv = calc.inverse(m)
 # Lists (from Phase 3)
 calc.set_list(1, [1, 2, 3, 4, 5])
 mean = calc.stat_mean(1)
+# Incremental write, added per §4.6's data-logging walkthrough: writes
+# one sample directly into list storage (PSRAM-backed, outside the
+# Python heap — Risk 6) instead of growing a Python list in-heap over
+# an open-ended logging run.
+calc.list_append(1, sample_value)
 
-# Display
+# Display — color is a named string (the existing platform::colors
+# palette) OR an (r,g,b) tuple, added per §4.6's periodic-table
+# walkthrough: ~10 category colors don't fit the ~6-entry named
+# palette, and C++ already has Color::from_rgb() to bind straight to.
 calc.clear_screen()
 calc.draw_text(10, 10, "Hello from Python!")
 calc.draw_line(0, 0, 319, 319, "white")
 calc.draw_rect(50, 50, 100, 80, "blue", fill=True)
+calc.draw_rect(50, 50, 100, 80, (255, 140, 0), fill=True)
 
 # Input
 key = calc.wait_key()
@@ -362,8 +655,12 @@ classes.
 
 ### 4.3 Program editor screen
 
-A simple on-device text editor for writing and editing Python scripts,
-now launched from 6A's app launcher rather than a Home softkey:
+**As of D54, this is a thin `ui::TextEditorWidget` (§3.5) wrapper**, not
+its own editor implementation — the buffer/cursor/nav/edit behavior
+below now lives in 6A, and this section describes 6B's configuration of
+it (`has_run_key = true`, `.py`, `/picocalc/programs/`, auto-indent
+after `:`) plus the Python-only pieces (RUN wiring, syntax highlighting
+stretch). Launched from 6A's app launcher rather than a Home softkey:
 
 ```
 ┌──────────────────────────────────┐
@@ -382,17 +679,23 @@ now launched from 6A's app launcher rather than a Home softkey:
 └──────────────────────────────────┘
 ```
 
-**Features**:
+**Features** (from §3.5's shared widget, unless marked Python-only):
 
 - Line-numbered display with cursor (row + column)
 - Arrow key navigation, `ENTER` inserts newline
 - `BACKSPACE` / `DEL` work as expected
-- Auto-indent on `ENTER` after `:` (match Python expectations)
-- `F1` (RUN): save current buffer, execute via `PythonInterpreter::exec_file()`
-- `F2` (SAVE): write to `/picocalc/programs/<name>.py`
-- `F3` (LOAD): file browser for `/picocalc/programs/`, select a `.py` file
+- Auto-indent on `ENTER` after `:` — 6B configures the trigger char; the
+  widget itself is trigger-agnostic (Notepad, §3.6, configures none)
+- `F1` (RUN, **Python-only**, `has_run_key = true`): save current buffer,
+  execute via `PythonInterpreter::exec_file()`
+- `F2` (SAVE): write to `/picocalc/programs/<name>.py` (the widget's
+  configured `save_dir`/`file_ext`)
+- `F3` (LOAD): §3.7's `FileBrowserScreen` in `kPick` mode, scoped to
+  `/picocalc/programs/`, `.py` only
 - `F4` (NEW): clear buffer, prompt for filename
-- Syntax highlighting is a stretch goal — basic keyword coloring (`import`, `def`, `for`, `if`, `while`, `return`) if time permits
+- Syntax highlighting is a stretch goal, **Python-only** — basic keyword
+  coloring (`import`, `def`, `for`, `if`, `while`, `return`) layered on
+  top of the shared widget's render pass, if time permits
 
 **Output capture**: when a script runs, `print()` output goes to a
 scrollable output pane that replaces the editor temporarily. Press
@@ -414,12 +717,26 @@ UI, math engine, line buffers). This is tight but workable because the
 CAS pool lives in PSRAM and the framebuffer uses line-buffer rendering.
 The MicroPython interpreter is only initialized when the user enters the
 program screen — it doesn't consume memory when doing normal calculator
-work. **Re-verify this budget against whatever 4D's list-cap increase and
+work. **Formalized as D57 (§8 P6-1): lazy allocation** — the Python heap
+comes up on entering the program/app screen and is freed on leaving
+(6B.14), not reserved at boot; this applies to any SD-discovered Python
+app (§4.5) too, since they all run through the same `PythonInterpreter`.
+Notepad (6C) never touches this budget at all — it has no interpreter.
+**Re-verify this budget against whatever 4D's list-cap increase and
 complex-storage widening (phase4-spec.md §7.3) actually cost** — both
 land before Phase 6 in the intended order and both touch SRAM.
 
 On Pico 2, it's comfortable — 520 KB SRAM minus ~104 KB for Python minus
 ~200 KB for framebuffer still leaves ~216 KB.
+
+**A data point from §4.6's periodic-table walkthrough**: a ~118-record
+dataset parsed into Python objects (dicts/lists from `json.loads`) is a
+meaningful, non-disqualifying slice of the Pico 1's 48 KB budget —
+rough order tens of bytes/object overhead plus string data likely lands
+in the low single-digit KB, but this is an estimate, not a measurement.
+Worth an actual `gc.mem_free()` check once 6B.1 exists, as the first
+real test of "how much of the 48 KB does a modest reference dataset
+actually cost," not just working-variable/script-buffer usage.
 
 ### 4.5 SD-discovered app manifests
 
@@ -455,6 +772,272 @@ program-runner path (§4.1), just reached from a named launcher tile
 instead of the generic editor's file browser. No new execution model, no
 new failure mode beyond "bad manifest, skip it."
 
+### 4.6 Candidate apps used to pressure-test the `calc` module (running list)
+
+**Added 2026-08-13.** §4.2's `calc` module was written speculatively,
+before any concrete app tried to use it. Walking through real app ideas
+against it — what's already sufficient vs. what's actually missing — is
+cheaper now than discovering gaps mid-6B. Entries accumulate here as
+they come up; each records what it needed, what §4.2 already covered,
+and what changed because of it.
+
+**1. Periodic table** (SD-discovered app, §4.5:
+`/picocalc/apps/periodic/{app.txt, main.py, elements.json}`)
+
+- **Already sufficient**: `calc.clear_screen`/`draw_rect`/`draw_text`
+  for the ~18-column grid (fits at ~17 px/cell with the small font),
+  `calc.wait_key` for cell navigation, `calc.read_file` for loading the
+  data file.
+- **Data source: SD JSON, parsed in Python** — decided over a native
+  `calc.element()` binding or an embedded Python literal, to keep the
+  data user-editable with no firmware rebuild, matching how
+  `/picocalc/apps/*` is meant to work generally. Costs: 6B.1 must build
+  the embed lib with `json` in scope (§5's task row updated), and the
+  parsed dataset is a real, if modest, draw on the Python heap (§4.4).
+- **New requirement surfaced**: draw primitives need **RGB tuples**, not
+  just the ~6-entry named color palette — added to §4.2's `calc.draw_*`
+  signatures. Category coloring (alkali metals, halogens, noble gases,
+  …) needs roughly 10 distinct colors.
+- **Not yet needed**: no grid/table-layout helper in `calc` itself —
+  plain per-cell `draw_rect`/`draw_text` calls in a Python loop are
+  expected to be fine for a one-time render (~118 cells, not a hot
+  loop). Revisit only if that turns out too slow on hardware.
+
+**2. Sensor / data-logging app (GPIO and/or I2C → lists)**
+
+**One TODO remains** (sensor catalog, P6-12 — not architecture-blocking,
+see below). **The pin map (P6-11) is fully answered**, cross-checked
+against two primary sources read directly 2026-08-13:
+`clockwork_Mainboard_V2.0_Schematic.pdf` (PICO section, J301/J302 — the
+Pico module's own 40-pin socket) and the official
+`Clockwork_PicoCalc_Assembly_Guidelines.pdf`'s "The Interfaces" page,
+which independently list the same two external headers pin-for-pin.
+Full physical port row (top to bottom, per the manual): 3.5mm
+headphone, USB-C charging, power key (top edge); SD card (right side);
+volume knob plus these two GPIO headers (left side):
+
+- **Core GPIOs** header: `3V3_OUT, GP2, GP3, GP4, GP5, GP21, GP28, GND`
+- **Mainboard GPIOs** header: `3V3_OUT, UART0_RX, UART0_TX, UART1_RX, UART1_TX, USB_DP, USB_DM, GND`
+
+Cross-referenced against the schematic's full Pico GPIO map (every pin
+not on either header above: GP6/GP7 = I2C1 keyboard bus; GP10–GP13 =
+SPI1 LCD bus; GP14/GP15 = LCD_DC/LCD_RST; GP16–GP19 = SPI0 SD card;
+GP22 = SD_DET card-detect, matching this project's own D26; GP20 = PSRAM
+CS; GP23/24/25/29 aren't header pins on any RP2040/2350 board at all;
+GP26/GP27 = audio PWM) and against this repo (`CMakeLists.txt:316-317`:
+`pico_enable_stdio_usb(...1)` / `pico_enable_stdio_uart(...0)`, and no
+`uart_init`/UART1 call anywhere in `src/`or `drivers/`), the two headers
+split into three tiers, not one free-vs-committed line:
+
+| Header pins | Status |
+|---|---|
+| **GP28** | Truly free — no peripheral, no debug circuit, nothing claims it at all |
+| **UART0_RX/TX (GP0/1), UART1_RX/TX (GP8/9)** | Unclaimed by *this firmware* (stdio is USB-only, UART is never initialized) — but physically wired to on-board debug-bridge circuitry (CH340C, analog switches); the project wiki's "Setting Up Arduino Development for PicoCalc keyboard" page suggests UART1 may double as the STM32 keyboard MCU's reflash/debug path, so repurposing isn't risk-free even though the calculator firmware itself doesn't touch it |
+| **GP2/GP3/GP4/GP5/GP21** | Hard-committed to PSRAM (quad-SPI data + SCK) — present on the "Core GPIOs" header electrically, but touching them risks corrupting PSRAM traffic |
+| **USB_DP/USB_DM** | Shared with the main USB-C port's alternate routing (the DEBUG section's SEL1/SEL2 analog-switch mux) — not independent spare pins |
+
+**No second I2C bus is possible** regardless of tier — there are no
+spare pins for one anywhere on the Pico. Any I2C sensor shares I2C1
+with the keyboard controller (different address, same bus, same timing
+risk flagged below), because that's the only I2C peripheral this
+hardware has, not a choice. **GPIO-only sensors have one clean pin**
+(GP28, also one of the three ADC-capable pins) plus two riskier ones
+(UART0/UART1, usable but not firmware-free of consequence).
+
+- **Goal**: read sensor data over GPIO and/or I2C, log samples over
+  time, save into calculator lists so existing list tools (§4.2's
+  `calc.set_list`/`calc.stat_mean`, the stats/plot screens from Phase 3)
+  work on the result unmodified — no new analysis path needed, only a
+  new data-entry path into the same lists.
+- **New HAL layer, not just new `calc` bindings**: per this project's
+  strict HAL discipline (D-prelude-2 — app code never touches the Pico
+  SDK directly), this needs a `platform::Gpio` wrapper — GP28 cleanly,
+  UART0/UART1's pins usable but not risk-free (three-tier table above)
+  — and I2C access through the **existing**
+  keyboard/south-bridge `I2cBus` — a second bus is off the table, there
+  are no spare pins for one. Sharing that bus with arbitrary third-party
+  sensor traffic risks the same class of timing problem D7 already
+  solved once for keyboard polling (a blocking 16 ms sleep was
+  unacceptable there; unpredictable sensor-library blocking on a shared
+  bus is worse, and this time it's user-authored Python, not a vendored
+  driver) — this needs a real mitigation (e.g. bus access serialized
+  through core 0's existing poll loop, sensor I2C transactions bounded
+  the same way key-drain and stdin-poll already are, per §3.2 of
+  [phase5.1-spec.md](phase5.1-spec.md)) before this is safe to build,
+  not an open question to defer.
+- **`calc` surface would be generic bus primitives, not per-sensor
+  drivers**: `calc.gpio_mode(pin, mode)`, `calc.gpio_read(pin)`,
+  `calc.gpio_write(pin, value)`, `calc.i2c_scan()`,
+  `calc.i2c_read(addr, reg, len)`, `calc.i2c_write(addr, reg, data)`.
+  Specific sensor support becomes pure-Python glue on top (e.g. a
+  `bme280.py` helper script), the same "platform provides primitives,
+  scripts provide behavior" split 6B already uses everywhere else.
+- **Command/config sensors, not just passive-read ones (2026-08-13)**:
+  some sensors need an active conversation, not a bare read —
+  write a command or config register, poll a status/ready bit, then
+  read the result, possibly re-issuing config mid-stream. The `_reg`
+  pair above already covers register-addressed versions of this (a
+  "write a command byte to register X" is just `calc.i2c_write`, no new
+  primitive needed) — but not every command/response sensor is
+  register-addressed at all; some expect a raw command frame with no
+  separate register field. Add the raw-transfer pair alongside the
+  register-addressed one, matching MicroPython's own `machine.I2C`
+  naming (`writeto`/`readfrom` vs. `writeto_mem`/`readfrom_mem`) rather
+  than inventing a bespoke shape: `calc.i2c_writeto(addr, data)`,
+  `calc.i2c_readfrom(addr, len)`. A command-loop script then looks like
+  `calc.i2c_writeto(addr, [CMD_START]); while not
+  (calc.i2c_readfrom(addr, 1)[0] & READY_BIT): pass; val =
+  calc.i2c_readfrom(addr, 2)` — ordinary Python control flow, no new
+  execution model.
+- **I2C errors need to be catchable, not silent**: a poll-for-ready loop
+  depends on distinguishing "not ready yet" from "the sensor NACKed" —
+  `calc.i2c_read*`/`calc.i2c_write*` should raise a Python exception on
+  bus error (NACK, timeout) rather than returning a sentinel value a
+  script could mistake for real data, so `try`/`except` around a retry
+  is the natural pattern, not silent misreads.
+- **Guardrail**: reject reserved/out-of-range pin numbers with a clear
+  Python exception rather than letting a bad pin number reach the SDK —
+  matches this project's general "clean error over undefined behavior"
+  stance elsewhere (e.g. `kMaxStack`/depth caps). The reserved list is
+  now concrete: hard-block GP2/3/4/5/20/21 (PSRAM) and GP6/7/10-19/22/26/27
+  (LCD/SD/keyboard/audio) outright; GP28 is unconditionally allowed;
+  whether GP0/1/8/9 (UART0/1) are allowed or also blocked is a design
+  call for whoever implements this, given the reflash/debug-path caveat
+  above — not decided here.
+- **Confirms a gap already found**: `calc.list_append` (added to §4.2's
+  code block this session) — a logging loop needs O(1) Python-heap cost
+  per sample, not "hold a growing Python list, then one `set_list` call
+  at the end," which is the wrong shape for an open-ended logging run.
+- **Deliberately not assumed**: per-sensor drivers (blocked on the
+  sensor-catalog TODO) and timer/interrupt-driven background sampling —
+  a plain Python `while` loop is the obvious v1 shape for **either**
+  case, passive-read (`calc.i2c_read*`/`gpio_read` + `list_append` +
+  `time.sleep`) or active command/config (interleaving
+  `calc.i2c_writeto`/`i2c_write` calls into the same loop, per above) —
+  both are ordinary Python control flow over the same primitive set, no
+  separate execution model for the "active" case. Revisit
+  timer/interrupt-driven sampling only if polling-loop jitter turns out
+  to matter for a real sensor.
+- **Bus contention scales with how "active" the loop is**: a
+  command/config sensor issues more I2C transactions per sample than a
+  bare read (write-command, poll-status one or more times, read-result
+  — several transactions per logged value instead of one), which
+  multiplies pressure on the keyboard-bus-sharing mitigation above
+  proportionally. Worth stating plainly rather than leaving implicit:
+  that mitigation has to hold up under dense command traffic, not just
+  occasional polling reads.
+- **UART sensors are a natural sibling, not scoped in**: the pin-map
+  research (§4.6 entry 2's table) already surfaced GP0/1 and GP8/9 as
+  unclaimed-by-firmware UART pins — a command/response protocol over
+  UART is the same shape as an I2C one and the pins physically exist,
+  but the user's original ask was GPIO/I2C specifically, so this stays
+  a flagged possibility, not an added requirement.
+
+**3. TVM (time-value-of-money) solver** — the TI-83/84+'s Finance app:
+`N`/`I%`/`PV`/`PMT`/`FV`/`P/Y`/`C/Y` fields, cursor to any one field,
+solve for it given the other four.
+
+Unlike entries 1 and 2, **this one needed nothing new** — worth
+recording precisely because it's the first data point the other
+direction. Everything it needs was already spec'd or already exists in
+the expression language:
+
+- **The numeric solve itself**: not `calc.solve` (§4.2's CAS/symbolic
+  binding) — the TVM equation is transcendental in `I%` for `N > 1`, not
+  generally symbolically solvable. The right tool is already in the
+  expression language and needs no new `calc` binding at all: `solve(f,
+  x, lo, hi)` (`src/math/catalog.cpp:101`, backed by
+  `math::numeric_solve`, D28) is a bracketed numeric root-finder over an
+  **arbitrary expression string** and an arbitrary single-letter
+  variable — it does not require a named graph Y-slot the way
+  `calc.graph_zero` does, so nothing here risks clobbering the user's
+  own Y1–Y7 graphs. Reachable today through the already-spec'd
+  `calc.eval()`: `calc.eval("solve(pv+pmt*n+fv, n, 1e-6, 1)")` finds
+  `I%` directly. This is worth calling out in §4.2 itself so a future
+  app author reaches for `solve(...)` inside `calc.eval` rather than
+  `calc.solve`, whose CAS path is the wrong tool for this shape of
+  problem.
+- **Form UI**: a field grid with arrow-key navigation and in-place edit
+  is buildable from already-spec'd primitives (`calc.wait_key`,
+  `calc.draw_text`, `calc.input` for the simplest per-field edit shape)
+  — no new display/input primitive needed, just more Python.
+- **Persisting last-used values**: `calc.read_file`/`calc.write_file`
+  (already spec'd) are sufficient — a flat `key=value` file, no `json`
+  dependency, unlike entry 1.
+- **Packaging**: another SD-discovered app (§4.5),
+  `/picocalc/apps/tvm/{app.txt, main.py}` — a second concrete example of
+  that pattern, reinforcing rather than changing it.
+
+**This corrects §9.2**, which named "a finance/TVM solver" as a case
+that "might still warrant a compiled app via §3.4 ... for speed/polish
+reasons." Having walked it through: there's no performance argument
+here — a form redraw and one small bracketed root-find are not remotely
+hot paths — so nothing about this example supports compiled-app
+treatment. §9.2 updated accordingly.
+
+**4. Sound demo** — play a tone/melody through the speakers.
+
+Confirmed by reading `src/`: `drivers/pwm_sound` (vendored, D-prelude-1;
+GP26/27 PWM, mono — both channels driven identically, square-wave
+tone only, no sample/WAV playback, no stereo) is **completely unused
+today** — no `sound_init`/`sound_play`/`sound_set_enabled` call anywhere
+in `src/platform/` or `src/apps/`. Unlike every other §4.6 entry, this
+one needs a whole new HAL layer from nothing, not a binding or a tweak
+to something that already exists.
+
+- **The driver already does more than its header admits**: the
+  interrupt handler (`pwm_sound.c`) computes an arbitrary
+  `(frequency, duration)` square wave internally — but the public API
+  (`pwm_sound.h`) only exposes 3 fixed effects (`SND_BEEP`,
+  `SND_TAB_SWITCH`, `SND_ERROR`), no way to play an arbitrary tone
+  through it as shipped.
+- **Vendored-code tension, not resolved here (P6-13)**: exposing an
+  arbitrary tone needs one new public entry point in `pwm_sound.h`/`.c`
+  itself, not just a `platform::` wrapper — the tone state
+  (`sound_frequency`/`sound_duration`/slice handles) is `static`
+  (file-private) to `pwm_sound.c`, unreachable from outside without a
+  header change. D-prelude-1 treats `drivers/` as read-only third-party
+  code, wrapped rather than modified; D7 hit a similar wall once (a
+  vendored driver's public API was inadequate) and resolved it by
+  reimplementing the missing piece in the wrapper instead of touching
+  the vendored driver — not viable here, since the ISR and its state are
+  private to the `.c` file, so there's nothing to reimplement against
+  from outside it.
+- **`calc` surface, once P6-13 is settled**: `calc.tone(freq_hz,
+  duration_ms)` — fire-and-forget, since the ISR already runs async. A
+  melody is just a Python loop of `calc.tone(...)` +
+  `time.sleep(duration_ms/1000)` calls; no new "wait for tone to finish"
+  primitive needed for a v1 demo.
+- **Mute already covered by the vendored driver**:
+  `sound_set_enabled`/`sound_is_enabled` already exist — `platform::Sound`
+  should just forward to them. Volume itself needs no `calc` binding at
+  all: per the assembly manual (§4.6 entry 2), there's a physical volume
+  knob, analog/hardware-controlled, not software.
+- **New source files this would actually add** (not yet in §2's list,
+  unlike everything else this session): `src/platform/sound.hpp/.cpp`.
+
+**Scope decided 2026-08-13**: the demo app stays at the minimal tone
+extension above — monophonic square-wave melodies via `calc.tone`, not
+sample playback. Researching the vendored driver's real ceiling turned
+up two more capable references (both on this same GP26/27 hardware):
+GP26/GP27 share one PWM slice (confirmed independently on the
+ClockworkPi forum, "Audio with PIO PWM" — a real RP2040/2350 limit, not
+vendored-driver laziness; RP2350 also gets 16-bit PWM resolution vs
+RP2040's 10-bit, a real board-quality gap either way), and a separate,
+MIT-licensed project (LofiFren's PicoCalc firmware) ships `picosampler`
+— a **DMA-paced PWM sampler mixing up to 8 voices of 8-bit PCM streamed
+from SD**, fixed-point throughout (the audio interrupt never touches
+the FPU), proving real sampled/multi-voice music is achievable on this
+hardware class. That's real driver-writing effort (tens of hours), not
+"a demo app," and that project targets RP2350/Pico 2 specifically (no
+stated Pico 1 support) — a real tension against this project's
+dual-board requirement. **Spun off as its own candidate, §9.4
+("PCM sampler audio engine," candidate sub-phase **6.2**)** rather than
+folded into this demo — see there for the full writeup. P6-13 (above)
+stays scoped to the minimal tone extension only; the sampler idea
+carries no vendored-code tension at all, since it would be original
+code in `platform::Sound`, not an edit to `pwm_sound.c`.
+
 ---
 
 ## 5. Task breakdown
@@ -468,14 +1051,17 @@ Solo developer, part-time (~20 hrs/week).
 | 6A.1 | `AppRegistry` + static registration pattern | 3 | Apps self-register at boot, `count()`/`get()` work |
 | 6A.2 | Launcher screen (list, select, launch) | 5 | Launch a stub app from the launcher |
 | 6A.3 | Screen-ownership handoff + exit-to-launcher convention | 4 | `ESC` from an app returns to launcher, not Home |
-| 6A.4 | Home-screen entry point (softkey or typed command) | 2 | `apps`/`app` command opens the launcher |
-| | **Subtotal** | **~14 hrs** | |
+| 6A.4 | Home-screen entry points (D58): dedicated softkey **and** `apps`/`app` typed command, both ship | 2 | Either the softkey or the `apps`/`app` command opens the launcher |
+| 6A.5 | Shared `TextEditorWidget` (§3.5): buffer, cursor, arrow nav, insert/backspace/auto-indent, config-driven softkey row, load/save-to-path | 7 | Widget instantiated standalone edits/saves a scratch file |
+| 6A.6 | `FileBrowserScreen` (§3.7): generalize `FilesScreen` in place — directory navigation (`ENTER` descends, parent key), `kBrowse`/`kPick` modes, `ext_filter`, `on_picked` callback | 5 | Diagnostic `Files` entry navigates subdirs; a `kPick` call scoped to `/picocalc/programs` returns a chosen `.py` path |
+| 6A.7 | File management (§3.7, D55): `Storage::rename_file`/`delete_dir` primitives, delete confirm dialog, rename via existing text-entry, new-folder key | 5 | Delete (confirmed), rename, and new-folder all work from both `kBrowse` and `kPick` |
+| | **Subtotal** | **~31 hrs** | |
 
 ### Sub-phase 6B: MicroPython programming (first base app)
 
 | # | Task | Est. hrs | Acceptance |
 |---|------|---|---|
-| 6B.1 | Build MicroPython embed lib (both boards) | 8 | `print(1+1)` → "2" on serial |
+| 6B.1 | Build MicroPython embed lib (both boards), incl. deciding which stdlib modules are compiled in (`json` needed per §4.6's periodic-table walkthrough — not just a bare interpreter) | 8 | `print(1+1)` → "2" on serial; `import json; json.loads("{}")` works |
 | 6B.2 | `PythonInterpreter` wrapper | 4 | Init/exec/shutdown clean |
 | 6B.3 | `calc` module: eval, variables, store/recall | 6 | `calc.eval("sin(pi/4)")` correct |
 | 6B.4 | `calc` module: CAS bindings (incl. complex solve) | 4 | `calc.solve("x^2+1=0","x")` → `["i","-i"]` |
@@ -485,21 +1071,29 @@ Solo developer, part-time (~20 hrs/week).
 | 6B.8 | `calc` module: display primitives | 4 | Script draws graphics |
 | 6B.9 | `calc` module: keyboard input | 3 | Read keys, text input |
 | 6B.10 | `calc` module: file I/O | 2 | Read/write SD files |
-| 6B.11 | Program editor screen, registered as a 6A app | 10 | Write a 20-line script on-device |
+| 6B.11 | Python program editor: thin `TextEditorWidget` wrapper (§4.3) — RUN wiring, `.py` ext/dir, auto-indent-after-`:` config, syntax highlighting stretch, registered as a 6A app | 3 | Write a 20-line script on-device |
 | 6B.12 | Execution: output capture, error display | 4 | print output + line-numbered errors |
 | 6B.13 | Load/save scripts to SD | 3 | Save, power cycle, reload, run |
 | 6B.14 | Memory management: lazy init, cleanup | 3 | Heap freed on leaving program screen |
 | 6B.15 | SD app manifest parser + second `AppRegistry` tier (§4.5) | 6 | Malformed manifest skipped + logged, not fatal |
 | 6B.16 | Boot-time SD app scan + launcher integration (§4.5) | 6 | `/picocalc/apps/finance/` shows as a named launcher tile |
-| | **Subtotal** | **~73 hrs** | |
+| | **Subtotal** | **~66 hrs** | |
+
+### Sub-phase 6C: Notepad (first concrete future app)
+
+| # | Task | Est. hrs | Acceptance |
+|---|------|---|---|
+| 6C.1 | Notepad app: thin `TextEditorWidget` wrapper (§3.6) — `.txt` ext, `/picocalc/notes/` dir, no RUN key, registered as a 6A app | 3 | Write, save, power-cycle, reload a text note on-device |
+| | **Subtotal** | **~3 hrs** | |
 
 ### Summary
 
 | Sub-phase | Hours | Deliverable |
 |-----------|-------|-------------|
-| 6A: App framework | ~14 | Launcher screen, app registry, screen-handoff convention |
-| 6B: MicroPython | ~73 | Interpreter, `calc` module, editor, SD scripts, SD-discovered app manifests — first app on 6A |
-| **Total (committed)** | **~87 hrs** | |
+| 6A: App framework | ~31 | Launcher screen, app registry, screen-handoff convention, shared text-editing widget, generalized file browser (navigate/pick/manage) |
+| 6B: MicroPython | ~66 | Interpreter, `calc` module, editor (thin wrapper on 6A's widget), SD scripts, SD-discovered app manifests — first app on 6A |
+| 6C: Notepad | ~3 | Second thin wrapper on 6A's widget — plain-text notes, no MicroPython dependency (D54) |
+| **Total (committed)** | **~100 hrs** | |
 | *Compiled app launcher entries (§3.4, stretch)* | *~25–35, gated on a feasibility spike* | *`uf2loader`-based reboot into a full app `.uf2`, selected the same way as a Python app* |
 | *Native dynamically-loaded (in-process) apps* | *deferred* | *own future phase, not Phase 6 — see §9.1* |
 | *6C+ other future apps, release engineering* | *unscoped* | *see §9.2 — no estimate until something is actually picked up* |
@@ -521,6 +1115,11 @@ dominated by MicroPython's own bytecode VM, not anything this firmware
 adds. The one guardrail worth repeating — the Python heap is only
 allocated when the program screen is entered (§4.4), so MicroPython has
 zero steady-state cost during normal calculator use, graphing included.
+
+### Notepad (6C)
+
+Negligible, same class as 6A — a thin wrapper around an already-built
+widget, no interpreter, no heap of its own beyond the text buffer.
 
 ---
 
@@ -570,12 +1169,20 @@ P4-4/P4-5, renumbered into this document.)*
 
 | # | Question | Options | When |
 |---|----------|---------|------|
-| P6-1 | Python heap: static at boot or lazy on first use? | Lazy saves ~56 KB when unused | 6B implementation |
+| P6-1 | Python heap: static at boot or lazy on first use? | **Resolved 2026-08-13 (D57): lazy** — allocated on entering the program/app screen, freed on leaving (matches §4.4/§6's prose, now formalized) | 6B implementation |
 | P6-2 | `calc.plot()` from Python: immediate graph switch or buffered? | Immediate vs. buffered | 6B implementation |
-| P6-3 | Launcher entry point: dedicated Home softkey, or typed-command-only like `lists`/`stats`? | Softkey is more discoverable; typed-only matches the Phase 3 precedent and doesn't consume a scarce F-key slot | 6A implementation |
-| P6-4 | Does leaving an app via `HOME` (not `ESC`) skip the launcher entirely, or route through it? | Direct-to-Home matches every other screen's existing `HOME` behavior; routing through the launcher is more consistent but adds a hop | 6A implementation |
+| P6-3 | Launcher entry point: dedicated Home softkey, or typed-command-only like `lists`/`stats`? | **Resolved 2026-08-13 (D58): both** — a softkey and the `apps`/`app` command ship together | 6A implementation |
+| P6-4 | Does leaving an app via `HOME` (not `ESC`) skip the launcher entirely, or route through it? | **Resolved 2026-08-13 (D58): skips it** — `HOME` keeps its existing system-wide short-circuit-to-Home behavior unchanged; only `ESC` routes through the launcher | 6A implementation |
 | P6-5 | §3.4 compiled apps: depend on `uf2loader` being installed, or make the calculator self-sufficient for the flash-write/reboot step? | Depending on `uf2loader` is less new code but adds an external GPLv3 install-time dependency; self-sufficient is more code but no dependency | 3.4 feasibility spike |
-| P6-6 | §3.4 "return to calculator": bundle the calculator's own `.uf2` as a resource apps carry, or fetch it fresh from a known SD path at return time? | Bundled is more reliable (works even if SD layout changes) but bloats every app; fetched-fresh is leaner but couples every app to a path convention | 3.4 implementation |
+| P6-6 | §3.4 "return to calculator": bundle the calculator's own `.uf2` as a resource apps carry, or fetch it fresh from a known SD path at return time? | **Resolved 2026-08-13 (D59): fetched fresh**, from `/picocalc/firmware.uf2`. Kept in sync by the firmware self-snapshotting its own running image there (safe: on-device flash is memory-mapped/XIP, so this is an ordinary read, not the write-into-flash risk the restore step has) — **checked and, only on mismatch, written lazily on every launcher entry** (§3.2's `on_activate`), not at boot. Needs two prerequisites this codebase doesn't have yet: an exposed build-size symbol, and a version/build identifier to gate the write (`pico_set_program_version` or similar — zero hits in `CMakeLists.txt` today) | 3.4 implementation |
+| P6-7 | §3.7 file browser: how much is in scope for Phase 6 — navigate+pick only, or also delete/rename/new-folder management? | **Resolved 2026-08-13 (D55): management is in scope** — delete (confirm-gated), rename, new folder, plus `Storage::rename_file`/`delete_dir` (non-recursive) | 6A.7 implementation |
+| P6-8 | §3.7: does the existing diagnostic `Files` entry point (`FilesScreen`, `/picocalc`-only, read-only) change to support navigation, or does a separate picker-mode component get added alongside it unchanged? | **Resolved 2026-08-13 (D55): generalized in place** — one `FileBrowserScreen` with `kBrowse`/`kPick` modes; the diagnostic keeps its current `start_dir`/behavior as `kBrowse`'s default and gains navigation/management for free | 6A.6/6A.7 implementation |
+| P6-9 | §9.3 home-screen scripts: does a line that errors abort the rest of the script, or continue and report at the end? | **Resolved 2026-08-13 (D56): abort** on the first error | 9.3 implementation, if promoted |
+| P6-10 | §9.3: where do script files live on SD? | **Resolved 2026-08-13 (D56): `/picocalc/scripts/`** | 9.3 implementation, if promoted |
+| P6-11 | §4.6 entry 2 (sensor logging): this project's hardware pin map is undocumented — which pins do LCD SPI/keyboard I2C/SD SPI/PSRAM/audio PWM already commit, and is a second I2C peripheral available on any exposed expansion header? | **Resolved 2026-08-13**: cross-checked from two primary sources, `clockwork_Mainboard_V2.0_Schematic.pdf` and the official `Clockwork_PicoCalc_Assembly_Guidelines.pdf` ("The Interfaces" page) — full pin table and three-tier free/risky/committed breakdown in §4.6 entry 2. Confirmed: a real case-exterior "Core GPIOs"/"Mainboard GPIOs" header exists (left side); only GP28 is unconditionally free; no second I2C bus exists anywhere on the chip | §4.6 entry 2's remaining open item is only P6-12 (sensor catalog) |
+| P6-12 | §4.6 entry 2: which specific sensors/protocols to support | Not catalogued yet (user TODO) — architecture (generic GPIO/I2C primitives, not per-sensor drivers) is intentionally decidable independent of this | Sensor catalog session, whenever it happens |
+| P6-13 | §4.6 entry 4 (sound demo): playing an arbitrary tone needs one new public entry point in the vendored `pwm_sound.h`/`.c` (the ISR already computes arbitrary frequency/duration internally; only the enum-limited public API is missing it) — is editing vendored driver code acceptable here, given D-prelude-1 treats `drivers/` as read-only third-party, wrapped rather than modified? | D7 resolved a similar tension by reimplementing in the wrapper instead of touching the vendored driver — not viable here, since the tone state is `static`/file-private to `pwm_sound.c`, unreachable from `platform/` without a header change | Before §4.6 entry 4 can be scoped |
+| P6-14 | §3.4: does a real power-cycle actually deassert `PICO_EN` (POR on the Pico), confirming `watchdog_caused_reboot()` reliably distinguishes "user power-cycled" from "calculator deliberately handed off to an app"? | Schematic (AXP2101 PMIC, `PICO_EN` gating the Pico's own `PICO_VSYS` regulator) strongly suggests yes, but the actual off-sequencing lives in the STM32 keyboard MCU's firmware — not confirmable from the schematic alone | 3.4 feasibility spike (same hardware-verification pass as P6-5) |
 
 ---
 
@@ -667,13 +1274,15 @@ not a line item anywhere in Phase 6.
 
 ### 9.2 Other candidates
 
-- **Additional built-in apps**, TI-Apps-style: a finance/TVM solver, a
-  periodic table reference, a probability simulator. On this platform
-  the general answer to "TI ships this as an app" is usually "write it
-  in MicroPython" (6B), or as an SD-discovered app (§4.5), rather than a
-  new C++ app; a few high-value ones might still warrant a compiled app
-  via §3.4's reboot mechanism for speed/polish reasons. Evaluate case by
-  case.
+- **Additional built-in apps**, TI-Apps-style: a periodic table
+  reference, a probability simulator, and others. On this platform the
+  general answer to "TI ships this as an app" is usually "write it in
+  MicroPython" (6B), or as an SD-discovered app (§4.5), rather than a
+  new C++ app. **The TVM solver (§4.6 entry 3) has been walked through
+  and needs no compiled treatment** — no new bindings, no performance
+  case — so it's dropped from this "might warrant compiled" framing;
+  evaluate any *other* candidate case by case, but don't assume one is
+  needed by default.
 - **Desktop emulator build target**: a third build target (alongside
   Pico 1/Pico 2) that runs the UI on a development machine. Flagged
   independently in the [wishlist](../notes/wishlist.md) (font
@@ -688,12 +1297,109 @@ not a line item anywhere in Phase 6.
   either — could run in parallel with any of the above, or even before
   Phase 6 starts in earnest.
 
+### 9.3 Home-screen convenience scripts
+
+**Raised 2026-08-13, not yet scoped.** Deliberately **not** full
+programmability — no loops, no conditionals, no parameters. That's what
+6B/MicroPython is for. The goal is narrower: let a user save and replay
+a multi-step calculation they'd otherwise have to retype by hand —
+several `Home` lines in sequence, exactly as if typed one at a time.
+
+**Mechanism — reuses two things that already exist**: Phase 5.1's
+`HomeScreen::submit_line()` (shipped, HW-verified) already does
+trim → `handle_command()` → else `evaluate_input()` → `invalidate()`,
+the literal sequence a typed line goes through. A new typed command
+(e.g. `run <path>`) would read an SD text file and feed it to
+`submit_line()` one line at a time — the same thing Phase 5.1's
+serial-console host script already does over stdin, just fed from an SD
+file instead of the serial link. Bare `run` (no path) could open §3.7's
+`FileBrowserScreen` in `kPick` mode instead of requiring a typed path.
+Blank lines and a comment prefix (e.g. `#`) are skipped.
+
+**What a script line can be**: anything typeable at Home today —
+expressions (`B=sin(A)+2`), and every existing typed command, including
+the screen-switching ones already in `handle_command()` (`plot`,
+`lists`, `matrix`, `cas`, …) and `mode`. No new mechanism needed for
+either of those — they already run through `submit_line()` when
+injected (Phase 5.1 proved that path).
+
+**The one real gap**: window bounds (`graph::GraphWindow`) and Y=
+function slots (`Y1..Y7`, `graph::kFunctionSlots`) currently have **no
+typed-command equivalent** — only their dedicated screens
+(`WindowScreen`, the Y= editor) can set them, the same way `mode` was
+the only state-setting command before this. Scripting a "set up and
+switch to a graph" step needs one or two more entries in that same
+`handle_command()` dispatcher — e.g. a `window <xmin> <xmax> <ymin>
+<ymax>` command and a `y1=<expr>`-style setter — mirroring exactly how
+`mode` already writes into `graph::state()` and calls
+`save_graph_state()`. Small, fixed additions to an existing dispatcher,
+not a new subsystem.
+
+**Resolved 2026-08-13 (D56, §8 P6-9/P6-10)**: a line that errors
+**aborts the rest of the script** — multi-step calculations typically
+have later steps depend on earlier ones, so continuing past a failure
+would compound it. Script files live under **`/picocalc/scripts/`**,
+parallel to `/picocalc/programs/` and `/picocalc/notes/`. Still
+unscoped as a task (no hour estimate) — these two answers just remove
+the open design questions ahead of that.
+
+**Naming, if promoted**: this reuses Phase 5.1 machinery, wasn't part of
+Phase 6's original 6A/6B/6C plan, and surfaced mid-brainstorm rather
+than being scoped up front — the same shape that made 5.1/5.2 dotted
+sub-phases rather than lettered ones (`picocalc-subphase-naming`:
+letters are planned work, dots are what turned up outside a phase's
+stated goals). If this moves forward, **6.1** fits that convention
+better than a new `6D`.
+
+### 9.4 PCM sampler audio engine (candidate: 6.2)
+
+**Raised 2026-08-13**, spun off from §4.6 entry 4's sound demo once
+research turned up a materially bigger opportunity than "add a tone
+call" — see that entry for the full research trail (forum-confirmed
+GP26/GP27 shared-PWM-slice limit, RP2350's 16-bit vs RP2040's 10-bit
+PWM resolution, and LofiFren's MIT-licensed `picosampler`: a DMA-paced
+PWM sampler mixing up to 8 voices of 8-bit PCM streamed from SD, fully
+fixed-point). **Not the same naming case as §9.3** — this doesn't reuse
+existing project machinery the way home-screen scripts reuses Phase
+5.1's `submit_line()`; it surfaced mid-brainstorm as a "there's more
+here than the demo needs" finding while researching a different item,
+which is exactly `picocalc-subphase-naming`'s dots-vs-letters
+distinction from the other direction: unplanned work discovered outside
+Phase 6's stated goals. **6.2** (next available dotted slot after 6.1)
+fits that convention.
+
+**Deliberately unscoped — no task breakdown, no hour estimate.** What's
+already known, to save re-deriving it later:
+
+- **This is real driver work, not app work**: a DMA-paced interrupt
+  mixer reading PCM from SD, fixed-point throughout (the reference
+  implementation deliberately never touches the FPU in the audio ISR —
+  matches this project's own stack/frame-budget discipline elsewhere,
+  D47/D48). Tens of hours, its own design pass, not a `calc` binding
+  added to an afternoon's work.
+- **Original implementation, not a port**: `picosampler` is MIT-licensed
+  (permissive enough to reference or adapt with attribution), but it's a
+  different codebase built for a different firmware's architecture —
+  this project's own dual-board HAL discipline (D-prelude-2), PSRAM
+  conventions, and core 0/core 1 split would need original code, not a
+  drop-in.
+- **Dual-board tension, unresolved**: the reference implementation
+  targets RP2350/Pico 2 specifically, with no stated Pico 1 support.
+  Whether a PWM sampler is feasible on the Pico 1 at all (compute
+  budget, DMA channels, 10-bit PWM resolution) — or whether this ships
+  Pico-2-only, or degraded (fewer voices/lower rate) on Pico 1 — is a
+  real open question, not assumed either way.
+- **No vendored-code tension** (unlike §4.6 entry 4's minimal tone
+  extension, P6-13): this would be original code in a new
+  `platform::Sound`-adjacent component, not an edit to `pwm_sound.c`.
+
 ---
 
 ## 10. References
 
 1. Phase 4 spec (prerequisite — GC completeness milestone) — [phase4-spec.md](phase4-spec.md)
 2. Phase 5 spec (CAS — soft dependency for 6B's `calc` module) — [phase5-spec.md](phase5-spec.md)
+2a. Phase 5.1 spec (serial line injection — `HomeScreen::submit_line()`, the mechanism §9.3's convenience scripts would reuse) — [phase5.1-spec.md](phase5.1-spec.md)
 3. TI parity stocktake ("deliberately not chasing TI" — why 6A stays small) — [ti-parity.md](../notes/ti-parity.md)
 4. Docs site plan (release-engineering candidate, §9) — [docs-site-plan.md](../notes/docs-site-plan.md)
 5. MicroPython embed port — https://docs.micropython.org/en/latest/develop/embed.html
@@ -702,3 +1408,10 @@ not a line item anywhere in Phase 6.
    original source, missed on first pass) — [feasibility.md](../notes/feasibility.md) §4.4
 8. `uf2loader` — SD-card bootloader for RP2040/RP2350 on the PicoCalc,
    the basis for §3.4's reboot-based compiled apps — https://github.com/pelrun/uf2loader (GPLv3)
+9. Mainboard schematic (§4.6 entry 2's pin map, P6-11) —
+   `clockwork_Mainboard_V2.0_Schematic.pdf`,
+   https://github.com/clockworkpi/PicoCalc/blob/master/clockwork_Mainboard_V2.0_Schematic.pdf
+10. Official assembly guidelines, "The Interfaces" page (§4.6 entry 2's
+    external GPIO headers, P6-11) —
+    `Clockwork_PicoCalc_Assembly_Guidelines.pdf`,
+    https://github.com/clockworkpi/PicoCalc/blob/master/Clockwork_PicoCalc_Assembly_Guidelines.pdf

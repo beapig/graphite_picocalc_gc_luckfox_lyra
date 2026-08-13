@@ -1,6 +1,39 @@
 # Start here — next session
 
-**Last session:** 2026-08-10 (later) — **wiki navigation links fixed.**
+**Last session:** 2026-08-13 — **Phase 6 spec-completion brainstorm,
+docs-only.** No firmware changed — everything landed in
+`docs/phases/phase6-spec.md` and `docs/notes/decisions.md` (**D54-D59**).
+The editor (§4.3) generalized into a shared 6A `TextEditorWidget` (§3.5)
+with Notepad promoted to a committed first 6C app (§3.6, D54); the
+diagnostic `FilesScreen` generalized into a `FileBrowserScreen` with
+browse/pick modes plus delete/rename/new-folder management (§3.7, D55) —
+**6A/6B/6C's committed total moved 87 → 100 hrs** (6A alone: 14 → 31).
+Two new **unscoped** candidate sub-phases were opened: **6.1** (home-screen
+convenience-script replay via Phase 5.1's `submit_line()`, §9.3) and
+**6.2** (a PCM-sampler audio engine, §9.4, spun off the sound-demo
+pressure test after research turned up real prior art). Launcher UX
+(P6-3/P6-4, D58) and the compiled-app "return to calculator" mechanism
+(P6-6, D59) were both resolved. Full narrative in [worklog.md](worklog.md).
+
+> ## Read this before picking up Phase 6: a new §0 Pre-flight checklist
+>
+> `phase6-spec.md` §0 is new this session and gathers everything that
+> should be checked, decided, or built before 6A/6B work starts. **The
+> one that actually gates 6B's scope**: a fresh `size-report.sh`
+> measurement on current `main`, taken with 6A's static footprint in
+> place, is a precondition for sizing the 48 KB MicroPython heap — the
+> two existing numbers (`pre-phase5-review.md`'s ~12 KB, pre-CAS/pre-5.2;
+> the `picocalc-phase5.2-state` memory's ~5-10 KB) are both stale and
+> disagree with each other; **do not trust either.** If the fresh number
+> comes in under 56 KB free (48 KB heap + 8 KB C-stack), drop the heap
+> 48→40 KB *before* scoping 6B, not mid-implementation (Risk 6's lever).
+> §0 also carries the still-open [issue #27](https://github.com/moodoki/graphite_picocalc_gc/issues/27)
+> blocker (6B's `calc` bindings need re-verifying against the post-5.2
+> evaluator) and a combined hardware-verification spike (P6-5/P6-14) for
+> the compiled-app reboot mechanism — none of this needs a board until
+> that spike.
+
+**Previous session:** 2026-08-10 (later) — **wiki navigation links fixed.**
 Docs-tooling only, no firmware changed. `scripts/gen-wiki.sh` was linking to
 `Page-Name.md` instead of `Page-Name` in both in-page cross-links and
 `_Sidebar.md`; GitHub wikis (Gollum) serve extension-less URLs, so every wiki
@@ -60,9 +93,15 @@ page + wiki published and auto-deploying. Full narrative in
 | [#33](https://github.com/moodoki/graphite_picocalc_gc/issues/33) | host-side renderer for docs screenshots — `font.cpp` already compiles on the host |
 | [#15](https://github.com/moodoki/graphite_picocalc_gc/issues/15) / [#16](https://github.com/moodoki/graphite_picocalc_gc/issues/16) | tinyexpr: re-vendor **or** replace — alternatives, decide one and close the other |
 
-**Next phase is 6** (app framework + MicroPython), specced and not started.
-5.2's RAM win roughly doubled the Pico 1 margin for 6B's 48 KB heap (~5 KB ->
-~10 KB). Still not comfortable; `pre-phase5-review.md` lists further levers.
+**Next phase is 6** (app framework + MicroPython) — specced in much more
+detail after 2026-08-13's brainstorm, still not started. **Start with
+`phase6-spec.md` §0** (the pre-flight checklist above), not the task
+tables — the SRAM re-measurement it calls for is the item most likely to
+actually change 6B's scope. Committed total is now **~100 hrs** (6A 31 +
+6B 66 + 6C 3, up from 87 before this session — D54/D55). Two new unscoped
+candidates also exist: **6.1** (home-screen script replay, §9.3) and
+**6.2** (PCM sampler audio engine, §9.4) — neither is committed work, just
+recorded so it isn't lost.
 
 **Manual, if the wiki ever stops updating:** the `WIKI_TOKEN` secret carries an
 expiry by design (GitHub has no wiki-only permission, so it is a full repo-write

@@ -305,7 +305,142 @@ Still to verify on hardware:
 
 ---
 
-## 2026-08-10 (later) — Wiki page links pointed at raw markdown instead of rendered pages — generator fixed
+## 2026-08-13 — Phase 6 spec-completion brainstorm: editor/notepad generalized (D54), file management scoped in (D55), launcher + return-to-calculator UX resolved (D58/D59), hardware pin map researched, two new candidate sub-phases opened
+
+Docs/brainstorm-only session, no firmware changed. Everything landed in
+`docs/phases/phase6-spec.md` and `docs/notes/decisions.md` — six new
+decisions, **D54 through D59**, all dated 2026-08-13, all Accepted.
+
+**D54 — the editor generalizes, Notepad becomes a committed app.** §4.3's
+Python program editor was written Python-specific. Pulled the editing
+behavior out of 6B and into 6A as a new task (§3.5/6A.5): a config-driven
+`TextEditorWidget` (softkey row, file extension/save dir, optional RUN
+action, optional auto-indent trigger). 6B.11 becomes a thin wrapper around
+it (RUN wiring to `PythonInterpreter::exec_file()`, `.py` ext/dir, syntax
+highlighting stretch unchanged) — 6B.11 dropped from an estimated 10 hrs to
+3. Notepad, previously an unscoped §9.2 candidate, is promoted to a
+committed first 6C app (new §3.6) — a second thin wrapper, `.txt` ext, no
+RUN key, depending only on 6A, not 6B, so it isn't blocked by issue #27's
+open `calc`-bindings re-verification. 6A subtotal 14 → 21 hrs; new 6C
+subtotal 3 hrs; net +3 hrs to the committed total.
+
+**D55 — file management scoped in; `FilesScreen` generalized in place.**
+§3.5's `F3:LOAD` and the existing read-only, single-level,
+`/picocalc`-only diagnostic `FilesScreen` (`src/apps/files_screen.cpp`)
+were headed toward duplicating listing/navigation code. Generalized
+`FilesScreen` in place into a `FileBrowserScreen` (new §3.7) with
+`kBrowse`/`kPick` modes, plus delete (confirm-gated)/rename/new-folder
+management backed by new `Storage::rename_file`/`delete_dir` primitives —
+`delete_dir` is **non-recursive by design**, refusing on a non-empty
+directory rather than deleting its contents. New tasks 6A.6 (5 hrs) and
+6A.7 (5 hrs). 6A subtotal 21 → 31 hrs. **Committed total across 6A/6B/6C is
+now ~100 hrs, up from 87 before this session** (6A 31 + 6B 66 + 6C 3).
+
+**D56 — home-screen convenience scripts (new candidate 6.1, §9.3,
+unscoped).** Raised mid-session: reuse Phase 5.1's `submit_line()` to
+replay saved sequences of ordinary Home-screen lines from SD, one line at
+a time — deliberately **not** full programmability (no loops/conditionals,
+that's what 6B is for), just convenience replay of a multi-step
+calculation a user would otherwise retype by hand. D56 resolved its two
+open questions: a line that errors **aborts the rest of the script**
+(later lines typically depend on earlier results); script files live under
+**`/picocalc/scripts/`**, parallel to `/picocalc/programs/` and
+`/picocalc/notes/`. Still no task breakdown or hour estimate — candidate
+only. Named **6.1** (dotted, not lettered) per this project's
+letters-are-planned/dots-are-discovered convention, since it wasn't part
+of the original 6A/6B/6C plan.
+
+**New §4.6 — "candidate apps used to pressure-test the `calc` module,"
+four entries walked through against §4.2's speculative bindings:**
+
+- **Periodic table** (SD-discovered app): found the `calc.draw_*` color
+  parameter needs RGB tuples, not just the ~6-entry named palette (~10
+  category colors needed); confirmed the MicroPython embed build must
+  include `json` (6B.1's acceptance criteria updated to match).
+- **Sensor / GPIO+I2C data-logging app**: found `calc.list_append` is
+  needed (O(1) Python-heap cost per logged sample, not "grow a Python
+  list then one `set_list` call"), and added raw I2C primitives
+  (`calc.i2c_writeto`/`readfrom`, matching MicroPython's own
+  `machine.I2C` naming) alongside the register-addressed pair, for
+  command/config-loop sensors that don't use a separate register field —
+  an explicit mid-session user request. This entry also carries the
+  hardware pin-map research below.
+- **TVM (time-value-of-money) solver**: needs **nothing new** — the
+  right tool is already in the expression language and reachable through
+  `calc.eval()`: `solve(f,x,lo,hi)` (D28's numeric root-finder), not
+  `calc.solve` (§4.2's CAS/symbolic binding), since the TVM equation is
+  transcendental in `I%` for `N > 1`. §9.2's stale framing ("might warrant
+  a compiled app... for speed/polish") corrected — no performance case
+  exists for this example.
+- **Sound demo**: found `drivers/pwm_sound` is vendored but **completely
+  unused anywhere in `src/` today** — no `sound_init`/`sound_play` call at
+  all. Scoped the demo to a minimal `calc.tone(freq_hz, duration_ms)`
+  extension (needs one new public entry point in the vendored driver,
+  P6-13, unresolved — the tone state is file-private to `pwm_sound.c`).
+  Researching the driver's real ceiling turned up a much bigger
+  opportunity — a separate MIT-licensed PicoCalc project
+  (LofiFren's `picosampler`) ships a DMA-paced, fixed-point PWM sampler
+  mixing up to 8 voices of 8-bit PCM from SD — spun off as new **candidate
+  sub-phase 6.2** (§9.4, unscoped: real driver work, tens of hours, own
+  design pass, Pico-2-only in the reference implementation with no stated
+  Pico 1 support) per an explicit user ask ("create a dotted numeral
+  subphase candidate for it").
+
+**Real hardware research, primary sources.** Downloaded and read the
+official `clockwork_Mainboard_V2.0_Schematic.pdf` and
+`Clockwork_PicoCalc_Assembly_Guidelines.pdf` (both from
+github.com/clockworkpi/PicoCalc — session-scratchpad inputs only, not
+committed to the repo) to build this project's first-ever full Pico GPIO
+pin map. Findings folded into §4.6 entry 2: only **GP28** is
+unconditionally free; **GP2-5/GP20/21** are hard-committed to PSRAM;
+**GP0/1 (UART0), GP8/9 (UART1)** are unclaimed by this firmware (verified
+via `CMakeLists.txt`'s stdio config and a `src`/`drivers` grep — no
+`uart_init` anywhere) but physically wired to on-board debug/reflash
+circuitry, so repurposing isn't risk-free even though the calculator
+itself never touches them. No second I2C bus exists on the chip at all —
+any I2C sensor shares the keyboard's I2C1 bus. This also surfaced the
+AXP2101 PMIC's `PICO_EN`/`PICO_VSYS` topology, feeding a new mechanism:
+using `watchdog_caused_reboot()` to make §3.4's compiled-app slot get
+bypassed automatically on any real power-cycle (not just the calculator's
+own "return" binding) — works for third-party apps too, since it's a
+bootstrap decision rather than app cooperation. Recorded as new open
+question **P6-14**, resolved to "needs hardware confirmation" (schematic
+evidence points the right way, but the actual off-sequencing lives in the
+STM32 keyboard MCU's firmware).
+
+**D58 — launcher UX.** P6-3: **both** a dedicated softkey and the
+`apps`/`app` typed command ship — not either/or. P6-4: only `ESC` routes
+through the launcher; `HOME` keeps its existing system-wide
+short-circuit-to-Home behavior unchanged, same as every other screen —
+no special case for apps.
+
+**D59 — "return to calculator" fetches fresh, self-snapshotted lazily.**
+§3.4's compiled-app return step fetches fresh from a new
+`/picocalc/firmware.uf2` (not a per-app bundled resource), kept in sync by
+the firmware self-snapshotting its own running XIP flash image there —
+checked on every app-launcher entry (`on_activate`, not at boot), gated on
+a version-stamp comparison, and only written on a mismatch. Needs two
+prerequisites this codebase doesn't have yet — an exposed build-size
+symbol and a version/build identifier (`pico_set_program_version`,
+confirmed zero hits in `CMakeLists.txt` today).
+
+**New §0 "Pre-flight checklist"** consolidates all of the above plus
+pre-existing items: most importantly, `pre-phase5-review.md`
+(2026-08-02, pre-CAS, pre-5.2) warned the 48 KB MicroPython heap fit on
+the Pico 1 by only ~12 KB of spare SRAM — that number is now **stale**
+(CAS, 5.2, and this session's own new 6A tasks have all landed/been added
+since), and the `picocalc-phase5.2-state` memory's separate ~5-10 KB
+estimate disagrees with it. **A fresh `size-report.sh` measurement on
+current `main`, taken with 6A's static footprint in place, is flagged as
+a precondition for sizing 6B — not yet done.** §0 also surfaces GitHub
+issue #27 (6B's `calc` bindings need re-verifying against the post-5.2
+evaluator, already tracked as blocking 6B) and a combined
+hardware-verification spike bundling P6-5/P6-14.
+
+**No phase or sub-phase closed this session** — Phase 6 is still specced,
+not started, per README. No code changed, nothing to build or test.
+
+
 
 Docs-tooling only; no firmware changed.
 

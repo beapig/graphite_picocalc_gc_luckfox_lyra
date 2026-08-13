@@ -18,6 +18,178 @@ Format:
 
 ---
 
+## D59: §3.4 "return to calculator" fetches fresh from a known SD path, self-snapshotted lazily on launcher entry
+
+**Date**: 2026-08-13
+**Status**: Accepted
+**Context**: `phase6-spec.md` §8 P6-6 asked whether §3.4's compiled-app
+"return to calculator" step bundles the calculator's own image as a
+resource every app carries, or fetches it fresh from a known SD path at
+return time. A follow-up question ("can the firmware write a version of
+itself to SD?") established that fetch-fresh's main weakness — the SD
+copy going stale relative to the running firmware — has a cheap fix:
+on-device flash is memory-mapped (XIP), so the firmware can safely read
+its own running image (ordinary memory access, none of the
+write-into-flash risk the restore step itself has) and write it out as
+a normal file.
+**Decision**: Fetch fresh, from `/picocalc/firmware.uf2` (matching the
+top-level-singleton-file convention `graphstate.dat` already uses, not
+a per-app bundle). Kept in sync by the firmware **checking a
+version/build stamp and, only on a mismatch, self-snapshotting its own
+image there — lazily, on every app-launcher entry** (§3.2's
+`on_activate`), not eagerly at boot.
+**Rationale**: Removes fetch-fresh's only real weakness (staleness /
+the manual-sync obligation) without paying bundled-copy's costs (one
+image duplicated into every compiled app, and the versioning footgun
+where an old app's bundled copy silently downgrades the firmware on
+return). Checking on launcher entry rather than at boot means the cost
+(a version-stamp compare, cheap; a full snapshot write, only on
+mismatch) is paid only when someone is actually about to use a
+compiled app, not on every boot regardless of whether §3.4 is ever
+touched that session.
+**Tradeoffs**: Needs two prerequisites this codebase doesn't have yet —
+an exposed build-size symbol (linker-provided or baked into a fixed
+flash offset at build time) and a version/build identifier
+(`pico_set_program_version` or equivalent; zero hits in `CMakeLists.txt`
+today) to gate the write. Neither is hard, but both are new, and belong
+to whichever session actually implements §3.4, not assumed already
+present.
+**Revisit when**: §3.4 implementation, if the self-snapshot's actual SD
+write cost (up to ~2 MB, Pico 1's flash budget) turns out to make
+launcher entry noticeably slower than expected on real hardware.
+
+---
+
+## D58: App launcher — both entry points ship; only `ESC` routes through it, `HOME` keeps its global short-circuit
+
+**Date**: 2026-08-13
+**Status**: Accepted
+**Context**: `phase6-spec.md` §8 had two open questions about 6A's
+launcher UX: P6-3 (softkey vs. typed-command entry point) and P6-4
+(whether leaving an app via `HOME`, not just `ESC`, routes through the
+launcher or skips it).
+**Decision**: P6-3 — **both** ship: a dedicated softkey and the
+`apps`/`app` typed command, not a choice between them. P6-4 — **`ESC`
+only** routes through the launcher; `HOME` is unchanged and keeps its
+existing system-wide behavior of short-circuiting straight to the home
+screen from any screen, apps included, same as every other screen
+today.
+**Rationale**: Two distinct keys serve two distinct purposes — `ESC` is
+this project's established "step back one level" convention, `HOME` is
+the global "start over" convention every other screen already honors
+uniformly. Giving apps a special case on `HOME` would be the one
+inconsistency in an otherwise uniform system-wide behavior, for a
+one-hop convenience that `ESC` already provides via the launcher.
+**Tradeoffs**: A user who reaches an app via `HOME` from deep in the
+launcher and then hits `HOME` again to leave won't be returned to the
+launcher — they land on the home screen directly, same as leaving any
+other screen. Considered and accepted as the smaller inconsistency.
+**Revisit when**: none anticipated — this matches existing screen
+behavior rather than introducing a new pattern.
+
+---
+
+## D57: MicroPython heap is lazily allocated, not reserved at boot
+
+**Date**: 2026-08-13
+**Status**: Accepted
+**Context**: `phase6-spec.md` §4.4/§6 already described the Python heap
+as "only initialized when the user enters the program screen" in prose,
+but §8's P6-1 had never formally decided static-at-boot vs. lazy — the
+two sections were assuming an answer without one being on record.
+**Decision**: Lazy — the Python heap (48 KB Pico 1 / 96 KB Pico 2) is
+allocated on entering the program/app screen (6B.11's Python editor or
+any §4.5 SD-discovered Python app) and freed on leaving (6B.14).
+Nothing is reserved at boot. Notepad (6C) is unaffected — it has no
+interpreter and never touches this budget.
+**Rationale**: Zero steady-state SRAM cost during normal calculator use
+(graphing included) is worth more than saving the (small, one-time)
+init latency of allocating on first entry — matches the already-written
+"MicroPython has zero steady-state cost" performance claim in §6, which
+this decision now actually backs.
+**Tradeoffs**: Entering the program screen pays MicroPython's init cost
+every time rather than once at boot; not measured yet, expected small
+next to interpreter/bytecode-VM cost already called out as the dominant
+factor in §6.
+**Revisit when**: HW measurement of program-screen entry latency shows
+lazy init cost is not actually small.
+
+---
+
+## D56: Home-screen convenience scripts (§9.3, candidate 6.1) — abort on error, `/picocalc/scripts/`
+
+**Date**: 2026-08-13
+**Status**: Accepted
+**Context**: §9.3 of `phase6-spec.md` left two questions open (P6-9,
+P6-10) about a candidate feature that replays saved sequences of
+ordinary `Home` lines via `submit_line()` (Phase 5.1) — deliberately not
+full programmability, just convenience replay of a multi-step
+calculation.
+**Decision**: A line that errors **aborts the rest of the script**
+(no continue-and-report-at-end mode). Script files live under
+**`/picocalc/scripts/`**.
+**Rationale**: Convenience scripts are expected to be linear multi-step
+calculations where later lines depend on earlier results — continuing
+past a failed line would silently compound it rather than surface it.
+The script directory mirrors the existing `/picocalc/programs/`
+(6B) and `/picocalc/notes/` (6C, D54) convention.
+**Tradeoffs**: None significant — this is the simpler behavior in both
+cases (abort is less code than partial-failure bookkeeping; a fixed
+directory needs no configuration).
+**Revisit when**: if 6.1 is ever promoted to a committed task and
+turns out to need a non-linear/idempotent script shape (e.g. a setup
+script safe to re-run past a step that's already done) — not expected,
+not designed for here.
+
+---
+
+## D55: File management scoped into Phase 6; `FilesScreen` generalized in place
+
+**Date**: 2026-08-13
+**Status**: Accepted
+**Context**: §3.7 of `phase6-spec.md` (added same session, D54) flagged a
+generalized file browser as a real need — §3.5's `F3:LOAD` and the
+existing `/picocalc`-only diagnostic `FilesScreen` were on a path to
+duplicating listing/navigation code — but left two questions open
+(P6-7: is delete/rename/new-folder in scope at all; P6-8: change
+`FilesScreen` in place or add a separate picker component). Brainstorm
+session decided both.
+**Decision**: File management is in scope (P6-7: yes). `FilesScreen` is
+generalized in place rather than duplicated (P6-8): one component grows
+directory navigation (`ENTER` descends, a key returns to parent), a
+picker mode (`start_dir`/`ext_filter`/`on_picked` callback, used by
+§3.5's `F3:LOAD`), and management actions — delete (confirm-gated),
+rename (reuses the existing filename text-entry), new folder — available
+in both browse and picker modes. `platform::Storage` gains
+`rename_file(old, new)` and `delete_dir(path)`; the latter is
+**non-recursive by design** — refuses on a non-empty directory rather
+than deleting its contents.
+**Rationale**: One shared component instead of three call sites (Files
+diagnostic, editor's LOAD, notepad's LOAD) each reinventing listing;
+management is a small marginal add once navigation exists, and reachable
+directly from a LOAD flow instead of needing a separate detour to delete
+a bad save.
+**Tradeoffs**: Destructive actions become reachable from more entry
+points than before — mitigated by a confirm step on delete. Non-recursive
+`delete_dir` is a deliberate footgun-avoidance restriction, not an
+oversight: it means deleting a populated `/picocalc/apps/<name>/` folder
+takes multiple steps (empty it, then remove it), not one.
+**Revisit when**: recursive delete turns out to be genuinely wanted (e.g.
+one-step removal of an SD-discovered app's whole folder) — reconsider
+deliberately rather than defaulting to it now.
+
+## D54: Phase 6 editor generalized into a shared 6A widget; Notepad becomes a committed 6C app
+
+**Date**: 2026-08-13
+**Status**: Accepted
+**Context**: `phase6-spec.md`'s §4.3 program editor was written as a single Python-specific screen (6B.11). A documentation/brainstorm session flagged that nothing about line-numbered text editing is Python-specific, and a second consumer — a Notepad app, wanted independent of MicroPython — makes generalizing it a real requirement rather than the speculative over-engineering Risk 10 warns 6A away from.
+**Decision**: Pull the editing behavior out of 6B and into 6A as a new task (§3.5 / 6A.5): a generic, config-driven text-editing widget (softkey row, file extension/save dir, optional RUN action, optional auto-indent trigger char). 6B.11 becomes a thin Python wrapper around it (RUN wiring to `PythonInterpreter::exec_file()`, `.py` ext/dir, syntax highlighting stretch unchanged). Notepad is promoted from a §9.2 unscoped candidate to a committed first 6C app (§3.6) — a second thin wrapper, `.txt` ext, no RUN key — depending only on 6A, not 6B.
+**Rationale**: One editor implementation instead of two; Notepad ships independent of MicroPython/CAS readiness, which matters given issue #27's note that 6B's `calc` bindings need re-verifying against the post-5.2 evaluator before 6B is scoped for real — Notepad isn't blocked by that at all.
+**Tradeoffs**: +3 hrs net on Phase 6's committed total (87 → 90 hrs) for the added Notepad task; 6A grows by one task beyond its original four, though within Risk 10's "expand only when a second app actually needs more" guardrail.
+**Revisit when**: 6A.5 implementation finds Python-specific behavior load-bearing in the core buffer/cursor logic, not cleanly isolable to the softkey/RUN config layer — would mean the "generic widget" premise doesn't hold.
+
+---
+
 ## D53: per-element PSRAM reads are intermittently wrong — list *display* corrupts where the arithmetic does not
 
 **Date**: 2026-08-09
