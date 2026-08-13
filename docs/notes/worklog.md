@@ -440,7 +440,38 @@ hardware-verification spike bundling P6-5/P6-14.
 **No phase or sub-phase closed this session** — Phase 6 is still specced,
 not started, per README. No code changed, nothing to build or test.
 
+### Addendum (later, same day): issue #27 re-verified and closed — new §4.7, D60
 
+Follow-on to the §0.2 pre-flight item above: "can issue #27 be addressed
+without hardware?" — yes, source-reading only. Read `src/math/unified_eval.hpp`,
+`src/math/unified_home.hpp`, and `HomeScreen::evaluate_input`'s actual call
+sequence (`src/apps/home_screen.cpp:398-499`) rather than re-reading the
+spec's own assumptions.
+
+**D60 — `calc.eval()`'s binding shape, recorded against 6B.3.** The real
+pipeline `HomeScreen::evaluate_input` runs is three steps, not one:
+`math::cas::evaluate_home` (tried first) → `math::solveexpr::contains_solve`/
+`substitute` (inline `solve(f,x,lo,hi)` rewriting, if the CAS step declines)
+→ `math::unified::evaluate_home` (formats the result) — not raw
+`compile()`/`run()`, and not the narrower `evaluate_scalar()` built for the
+list/matrix cell editors. All three are already standalone `math::`
+functions, not trapped in the UI layer, so replicating the pipeline is a
+6B.3 wiring task, not a missing capability. Two binding requirements follow
+from the lifetime/reentrancy read: list/matrix results must be eagerly
+copied into native Python objects inside the same call that produced them
+(never held as a `Value` reference across a call boundary, per the lifetime
+contract at `unified_eval.hpp:340`); and the binding needs an explicit
+reentrancy guard, since `compile()`/`run()` share bss-resident singleton
+state and a MicroPython GC finalizer could in principle re-enter mid-call.
+Everything else in §4.2 (matrix/list/complex/store bindings) calls
+`math::Matrix`/list-store/`Variables` directly and is unaffected by the
+Phase 5.2 evaluator swap.
+
+Written up as new **§4.7** in `docs/phases/phase6-spec.md` (after §4.6,
+before §5's task breakdown); 6B.3's task row now references the concrete
+implementation shape; §0.2's checklist entry marked resolved.
+**Issue #27 commented and closed on GitHub** — 6B's `calc`-bindings
+re-verification is no longer an open blocker on 6B's scoping.
 
 Docs-tooling only; no firmware changed.
 

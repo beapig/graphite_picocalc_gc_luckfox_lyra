@@ -72,10 +72,16 @@ needs to be invoked *before* 6B is scoped, not discovered mid-6B.
 
 ### 0.2 Cross-phase blocker already on the issue tracker
 
-- **Re-verify 6B's `calc` bindings against the post-5.2 unified
-  evaluator** — [issue #27](https://github.com/moodoki/graphite_picocalc_gc/issues/27).
-  §4.2's bindings were specced against the evaluator Phase 5.2 replaced.
-  Explicitly recorded as blocking 6B's scoping, not just a nice-to-fix.
+- ~~Re-verify 6B's `calc` bindings against the post-5.2 unified
+  evaluator~~ — **closed 2026-08-13, see §4.7** —
+  [issue #27](https://github.com/moodoki/graphite_picocalc_gc/issues/27).
+  Resolved at the design level (entry points identified, a concrete
+  `calc.eval()` implementation shape recorded against 6B.3, two real
+  hazards found with mitigations — list/matrix result lifetime,
+  GC-triggered reentrancy). No dead entry points, no example needing a
+  rewrite. Implementation-time follow-through (does the real binding
+  code actually match §4.7's shape) is 6B.3's job, not a re-open of
+  this issue unless something new turns up.
 
 ### 0.3 Hardware verification spike (one session covers both)
 
@@ -1038,6 +1044,111 @@ stays scoped to the minimal tone extension only; the sampler idea
 carries no vendored-code tension at all, since it would be original
 code in `platform::Sound`, not an edit to `pwm_sound.c`.
 
+### 4.7 Re-verified against the unified evaluator (2026-08-13, closes issue #27)
+
+§4.2 was written against the evaluator Phase 5.2 replaced
+(`math::matexpr`/`complexexpr`/`listexpr`). Issue #27 asked four
+things before 6B could be scoped for real; answered here by reading
+`src/math/unified_eval.hpp`, `src/math/unified_home.hpp`, and
+`HomeScreen::evaluate_input`'s actual call sequence
+(`src/apps/home_screen.cpp:398-499`) — not by re-reading the spec's own
+assumptions.
+
+**1. Which entry points still exist, under what names.** More layers
+than the issue's phrasing suggested, and the answer matters for which
+one `calc.eval()` should actually call:
+
+- `math::unified::compile(src, Program&, err)` / `run(Program&, Value*, err, Mode, Commit*)` —
+  the lowest level (task 5.2.2-5.2.4). Not what a binding should call
+  directly: no formatting, no CAS, no `solve()` substitution.
+- `math::unified::evaluate_scalar(expr, Complex* out, err)` — a
+  lighter probe-only wrapper (scalar-only, no store, no CAS/`solve()`
+  pipeline). Built for the list/matrix cell editors, not shaped for a
+  general `calc.eval()`.
+- `math::unified::evaluate_home(expr, to_frac)` → `HomeResult` (kind,
+  formatted `text`, `store_label`, `Commit`) — the layer
+  `HomeScreen::evaluate_input` actually calls (`home_screen.cpp:499`),
+  **after** two earlier steps it does NOT include itself: `expr` has
+  already been through `math::cas::evaluate_home(expr, allow_complex)`
+  (a **separate, same-named function in a different namespace** —
+  tried first, `home_screen.cpp:404`) and, if that declines,
+  `math::solveexpr::contains_solve(expr)` /
+  `substitute(expr, size, err)` (`home_screen.cpp:445-447`) for inline
+  `solve(f,x,lo,hi)` rewriting — the exact function §4.6 entry 3's TVM
+  walkthrough leaned on. Both pipeline steps are already standalone
+  `math::` functions, not trapped in the UI layer, which is the good
+  news: **`calc.eval()` can replicate `HomeScreen::evaluate_input`'s
+  real pipeline (`cas::evaluate_home` → `solveexpr::contains_solve`/
+  `substitute` → `unified::evaluate_home`) by calling the same three
+  functions in the same order** — a wiring task once 6B is
+  implemented, not a missing capability. (The `>frac`/`>dec` suffix
+  strip is ~10 lines inline in the screen, `home_screen.cpp:468-484` —
+  trivial to reproduce or skip for v1.)
+- Everything else in §4.2 (`calc.matrix`/`det`/`inverse`,
+  `calc.set_list`/`stat_mean`, `calc.complex`/`c_abs`, `calc.store`/
+  `recall`) calls `math::Matrix`/list-store/`Variables` APIs directly,
+  **never through the unified evaluator at all** — confirmed by
+  §4.2's own closing line ("thin C++ wrapper... into the existing
+  `math::Engine`, `math::Matrix`..."). None of that surface is affected
+  by 5.2's evaluator swap; the re-verification narrows to `calc.eval()`
+  alone.
+
+**2. The lifetime contract** (`unified_eval.hpp:340-344`): a `kList`
+`Value` from `run()` is valid only until the next `run()`; a `kMatrix`
+`Value` in `Mode::kCommit` is safe (copied into `MatAns` immediately).
+This is a non-issue for the `evaluate_home()` path specifically, since
+it already returns **formatted text**, not a live `Value` reference —
+but §4.2's own example (`result = calc.eval("2 + 3 * sin(pi/4)")`)
+implies Python wants a *number* back, not a string, and a `calc.set_list`-adjacent
+call returning a Python list from a `kList` result would be reaching
+past the formatted-text layer into the underlying data. **Binding
+requirement, not just a risk to note**: any `calc.eval()` implementation
+that hands back list/matrix contents must copy them into native Python
+objects (a real Python list of floats, etc.) synchronously, inside the
+same call that produced them — never store the `Array*`/`Value`
+reference and read it later. Trivial to satisfy by construction if
+stated as a rule up front; a real bug class if left implicit.
+
+**3. Reentrancy** (`unified_eval.hpp:349`'s comment, "non-reentrant
+singletons" per the issue): `compile()`/`run()` share bss-resident state
+(one `Program` buffer, one 64-slot operand stack — `unified_eval.hpp:233-254`).
+A second `run()` invoked while the first is still in progress corrupts
+that shared state — not a clean error, memory corruption. §4.2's
+`calc.eval()` as speced is synchronous and doesn't let Python code run
+*during* an evaluation, so there's no natural re-entry path from the
+expression language itself. The narrow, real risk is MicroPython's own
+GC: an allocation inside the binding could trigger collection, and a
+Python `__del__` finalizer can run arbitrary code — including, in
+principle, another `calc.eval()` call — mid-evaluation. **Recommend an
+explicit reentrancy guard in the C++ binding** (a simple in-call flag,
+returning a clean Python exception if re-entered) rather than trusting
+"this shouldn't happen" — matches this project's existing "clean error
+over undefined behavior" stance (`kMaxStack`, pin validation, §4.6
+entry 2's I2C error handling).
+
+**4. Which of the four retired parsers the spec's examples assumed.**
+Phase 5.2 retired three (`matexpr`, `complexexpr`, `listexpr`) and
+absorbed a fourth's home-screen use: `tinyexpr` stops handling
+home-screen scalar spans (`unified-evaluator-changes.md` G5, "the
+escape hatch is gone") but **is deliberately not retired** for the
+graphing/table/stats path (`unified_eval.hpp:16-18`, P7) — a measured
+~1.75x performance guardrail (D52/D50), unaffected by any of this.
+§4.2's examples are all ordinary expressions with no boundary
+conditions, so none obviously land on a recorded divergence in
+`unified-evaluator-changes.md`'s W/N/F register — the closest is
+sign-handling around `(-2)^2`-shaped inputs (F1), already agreed
+between paths as of v0.3.2. Nothing in §4.2 needs rewriting on this
+count; 6B's own host tests should check real binding code against the
+register once written, the same way every other evaluator consumer
+does.
+
+**Net effect on scoping**: 6B is unblocked. The re-verification found
+no dead entry points and no example that needs rewriting — it found a
+concrete implementation shape (`calc.eval()` wraps `cas::evaluate_home`
+→ `solveexpr` → `unified::evaluate_home`, copies out list/matrix
+results eagerly, guards against re-entry) that 6B.3 should build
+against directly rather than re-deriving.
+
 ---
 
 ## 5. Task breakdown
@@ -1063,7 +1174,7 @@ Solo developer, part-time (~20 hrs/week).
 |---|------|---|---|
 | 6B.1 | Build MicroPython embed lib (both boards), incl. deciding which stdlib modules are compiled in (`json` needed per §4.6's periodic-table walkthrough — not just a bare interpreter) | 8 | `print(1+1)` → "2" on serial; `import json; json.loads("{}")` works |
 | 6B.2 | `PythonInterpreter` wrapper | 4 | Init/exec/shutdown clean |
-| 6B.3 | `calc` module: eval, variables, store/recall | 6 | `calc.eval("sin(pi/4)")` correct |
+| 6B.3 | `calc` module: eval, variables, store/recall — `calc.eval()` wraps `cas::evaluate_home` → `solveexpr::contains_solve`/`substitute` → `unified::evaluate_home` (§4.7), eager-copies list/matrix results, reentrancy-guarded | 6 | `calc.eval("sin(pi/4)")` correct |
 | 6B.4 | `calc` module: CAS bindings (incl. complex solve) | 4 | `calc.solve("x^2+1=0","x")` → `["i","-i"]` |
 | 6B.5 | `calc` module: complex bindings | 3 | `calc.c_abs(calc.complex(3,4))` = 5 |
 | 6B.6 | `calc` module: graph-analysis bindings | 4 | `calc.graph_zero`, `graph_integral` work |

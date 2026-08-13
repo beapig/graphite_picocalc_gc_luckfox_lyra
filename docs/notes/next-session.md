@@ -2,7 +2,7 @@
 
 **Last session:** 2026-08-13 — **Phase 6 spec-completion brainstorm,
 docs-only.** No firmware changed — everything landed in
-`docs/phases/phase6-spec.md` and `docs/notes/decisions.md` (**D54-D59**).
+`docs/phases/phase6-spec.md` and `docs/notes/decisions.md` (**D54-D60**).
 The editor (§4.3) generalized into a shared 6A `TextEditorWidget` (§3.5)
 with Notepad promoted to a committed first 6C app (§3.6, D54); the
 diagnostic `FilesScreen` generalized into a `FileBrowserScreen` with
@@ -13,7 +13,15 @@ convenience-script replay via Phase 5.1's `submit_line()`, §9.3) and
 **6.2** (a PCM-sampler audio engine, §9.4, spun off the sound-demo
 pressure test after research turned up real prior art). Launcher UX
 (P6-3/P6-4, D58) and the compiled-app "return to calculator" mechanism
-(P6-6, D59) were both resolved. Full narrative in [worklog.md](worklog.md).
+(P6-6, D59) were both resolved. **Later the same day, [issue #27](https://github.com/moodoki/graphite_picocalc_gc/issues/27)
+was re-verified and closed** — source-reading only, no hardware needed.
+New **§4.7** records the real `calc.eval()` pipeline
+(`math::cas::evaluate_home` → `math::solveexpr::contains_solve`/
+`substitute` → `math::unified::evaluate_home`, not raw `compile()`/`run()`)
+plus two binding requirements (eager copy of list/matrix results, an
+explicit reentrancy guard) as **D60**; 6B.3's task row now points at it.
+6B is unblocked — no remaining open issue gates its scoping. Full
+narrative in [worklog.md](worklog.md).
 
 > ## Read this before picking up Phase 6: a new §0 Pre-flight checklist
 >
@@ -27,11 +35,11 @@ pressure test after research turned up real prior art). Launcher UX
 > disagree with each other; **do not trust either.** If the fresh number
 > comes in under 56 KB free (48 KB heap + 8 KB C-stack), drop the heap
 > 48→40 KB *before* scoping 6B, not mid-implementation (Risk 6's lever).
-> §0 also carries the still-open [issue #27](https://github.com/moodoki/graphite_picocalc_gc/issues/27)
-> blocker (6B's `calc` bindings need re-verifying against the post-5.2
-> evaluator) and a combined hardware-verification spike (P6-5/P6-14) for
-> the compiled-app reboot mechanism — none of this needs a board until
-> that spike.
+> §0's other item, [issue #27](https://github.com/moodoki/graphite_picocalc_gc/issues/27)
+> (6B's `calc` bindings vs. the post-5.2 evaluator), was **closed the same
+> day** — see §4.7/D60 below. What's left in §0 is a combined
+> hardware-verification spike (P6-5/P6-14) for the compiled-app reboot
+> mechanism — doesn't need a board until that spike.
 
 **Previous session:** 2026-08-10 (later) — **wiki navigation links fixed.**
 Docs-tooling only, no firmware changed. `scripts/gen-wiki.sh` was linking to
@@ -88,7 +96,6 @@ page + wiki published and auto-deploying. Full narrative in
 | | |
 |---|---|
 | [#24](https://github.com/moodoki/graphite_picocalc_gc/issues/24) | **D53 root cause** — start from the address hypothesis, not concurrency. 40,000 instrumented reads came back clean. |
-| [#27](https://github.com/moodoki/graphite_picocalc_gc/issues/27) | 6B's `calc` bindings were specced against the evaluator 5.2 replaced — **re-verify before scoping 6B** |
 | [#26](https://github.com/moodoki/graphite_picocalc_gc/issues/26) | matrix nesting's unattributed ~104 B/level |
 | [#33](https://github.com/moodoki/graphite_picocalc_gc/issues/33) | host-side renderer for docs screenshots — `font.cpp` already compiles on the host |
 | [#15](https://github.com/moodoki/graphite_picocalc_gc/issues/15) / [#16](https://github.com/moodoki/graphite_picocalc_gc/issues/16) | tinyexpr: re-vendor **or** replace — alternatives, decide one and close the other |

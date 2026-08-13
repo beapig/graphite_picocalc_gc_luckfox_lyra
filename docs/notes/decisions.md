@@ -18,6 +18,49 @@ Format:
 
 ---
 
+## D60: 6B's `calc.eval()` binding shape, re-verified against the unified evaluator (closes issue #27)
+
+**Date**: 2026-08-13
+**Status**: Accepted
+**Context**: [Issue #27](https://github.com/moodoki/graphite_picocalc_gc/issues/27)
+flagged that §4.2's `calc` module bindings were specced against the
+evaluator Phase 5.2 replaced, and listed four things to check before
+6B could be scoped for real: which entry points still exist, the
+returned-`Value` lifetime contract, `compile()`/`run()`'s
+non-reentrant-singleton behavior, and which of the four retired
+parsers the spec's examples assumed. Addressed by reading
+`unified_eval.hpp`, `unified_home.hpp`, and
+`HomeScreen::evaluate_input`'s actual call sequence
+(`home_screen.cpp:398-499`) rather than re-reading the spec's own
+assumptions.
+**Decision**: `calc.eval()` should wrap the same three-step pipeline
+`HomeScreen::evaluate_input` actually runs —
+`math::cas::evaluate_home` → `math::solveexpr::contains_solve`/
+`substitute` → `math::unified::evaluate_home` — not raw
+`compile()`/`run()` and not the narrower `evaluate_scalar()`. Two
+binding requirements follow from the lifetime/reentrancy findings: (1)
+list/matrix results must be eagerly copied into native Python objects
+inside the same call that produced them, never held as a reference
+across a call boundary; (2) the binding needs an explicit reentrancy
+guard (a simple in-call flag, clean Python exception on re-entry) as a
+defensive measure against a MicroPython GC finalizer re-entering the
+evaluator mid-call. Everything else in §4.2 (matrix/list/complex/
+store bindings) calls `math::Matrix`/list-store/`Variables` APIs
+directly and was confirmed unaffected by the evaluator swap.
+**Rationale**: `evaluate_home()`/`cas::evaluate_home()`/`solveexpr::*`
+are already standalone `math::` functions, not trapped in the UI
+layer — replicating `HomeScreen`'s real pipeline is a wiring task for
+whoever implements 6B.3, not a missing capability requiring new C++
+surface. Recording the exact call order now means it doesn't need
+re-deriving from source at implementation time.
+**Tradeoffs**: None — this is pure de-risking, no scope or API surface
+actually changed in §4.2 as a result.
+**Revisit when**: 6B.3 implementation finds the real pipeline behaves
+differently than this read of the source predicted — reopen #27 rather
+than silently patching around a surprise.
+
+---
+
 ## D59: §3.4 "return to calculator" fetches fresh from a known SD path, self-snapshotted lazily on launcher entry
 
 **Date**: 2026-08-13
