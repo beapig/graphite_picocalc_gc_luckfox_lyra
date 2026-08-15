@@ -103,6 +103,7 @@ add_executable(picocalc_graphcalc
     src/math/functions.cpp
     src/math/format.cpp
     src/math/frac.cpp
+    src/math/autoclose.cpp
     src/math/catalog.cpp
     src/math/scratch.cpp
     src/math/array.cpp

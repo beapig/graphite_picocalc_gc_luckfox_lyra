@@ -172,6 +172,15 @@ echo "== Compiling + linking test_units =="
     "$OUT/tinyexpr.o" "${CEPHES_OBJS[@]}" \
     -o "$OUT/test_units"
 
+# Entry-time paren auto-close (issue #35). Pure string logic — no math
+# engine, no tinyexpr, no cephes.
+echo "== Compiling + linking test_autoclose =="
+"$CXX" -std=c++17 -O1 -Wall -Wextra \
+    -Isrc \
+    tests/host/test_autoclose.cpp \
+    src/math/autoclose.cpp \
+    -o "$OUT/test_autoclose"
+
 echo "== Compiling + linking test_seq =="
 "$CXX" -std=c++17 -O1 -Wall -Wextra -DTE_POW_FROM_RIGHT \
     -Isrc -Idrivers/tinyexpr \
@@ -238,6 +247,9 @@ echo "== Running test_analysis =="
 
 echo "== Running test_units =="
 "$OUT/test_units"
+
+echo "== Running test_autoclose =="
+"$OUT/test_autoclose"
 
 echo "== Running test_seq =="
 "$OUT/test_seq"
