@@ -21,6 +21,7 @@ public:
     void set_text(const char* s);
     const char* text() const { return buf_; }
     size_t length() const { return len_; }
+    size_t cursor() const { return cursor_; }
     bool empty() const { return len_ == 0; }
 
     // Draw within [x, x+w); y is the text baseline top. Shows a block

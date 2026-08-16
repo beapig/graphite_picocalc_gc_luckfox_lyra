@@ -7,6 +7,7 @@
 #include <cstring>
 
 #include "platform/storage.hpp"
+#include "platform/sound.hpp"
 #include "gfx/font.hpp"
 #include "ui/chrome.hpp"
 #include "ui/screen_manager.hpp"
@@ -14,6 +15,7 @@
 #include "math/cas/cas_eval.hpp"
 #include "math/cas/exact.hpp"
 #include "math/cas/serialize.hpp"
+#include "math/catalog.hpp"
 #include "math/engine.hpp"
 #include "math/format.hpp"
 #include "math/frac.hpp"
@@ -46,6 +48,21 @@
 #include "graph/graph_state.hpp"
 
 namespace apps {
+
+namespace {
+
+// Installed by the host build at boot (compiled defaults + the editable
+// commands.txt); stays null on firmware, where the popup matches only
+// math::catalog. See set_command_hints() in home_screen.hpp.
+const CommandHint* g_cmd_hints = nullptr;
+int g_cmd_hint_count = 0;
+
+}  // namespace
+
+void set_command_hints(const CommandHint* items, int count) {
+    g_cmd_hints = items;
+    g_cmd_hint_count = count;
+}
 
 namespace {
 constexpr const char* kHistoryPath = "/picocalc/history.txt";
@@ -163,6 +180,11 @@ uint32_t home_eval_us() {
 #endif
 
 void HomeScreen::push_entry(const char* expr, const char* result, ResultKind kind) {
+    // Error beep (TI-style): boot replay never carries kError (errors are
+    // not persisted), so this only fires for live evaluation failures.
+    if (kind == ResultKind::kError) {
+        platform::sound().play(platform::SoundEffect::kError);
+    }
 #if PICOCALC_EVAL_PROBE
     if (g_probe_t0 != 0) {
         g_probe_us = static_cast<uint32_t>(platform::uptime_us() - g_probe_t0);
@@ -389,6 +411,7 @@ void HomeScreen::evaluate_input(bool force_decimal) {
     if (input_.empty()) {
         return;
     }
+    suggest_open_ = false;  // the line is being run, not composed
 #if PICOCALC_EVAL_PROBE
     g_probe_t0 = platform::uptime_us();
     g_probe_us = 0;
@@ -846,6 +869,122 @@ void HomeScreen::insert_text(const char* s) {
     std::snprintf(buf, sizeof(buf), "%s%s", input_.text(), s);
     input_.set_text(buf);
     invalidate_input();
+    update_suggestions();
+}
+
+void HomeScreen::update_suggestions() {
+    // The popup floats over the HISTORY band (above kInputY), so every
+    // change to its state or content must dirty that band —
+    // invalidate_input() only covers [kInputY, kSoftkeyY) and would
+    // leave a stale or missing popup. Single exit, invalidate last.
+    const bool was_open = suggest_open_;
+    suggest_open_ = false;
+    suggest_count_ = 0;
+    suggest_sel_ = 0;
+
+    // Only the typing position qualifies: cursor at end-of-line. Moving
+    // the cursor into the line reads as editing, not composing, and the
+    // trailing-word model below only describes that position anyway.
+    const char* text = input_.text();
+    const size_t len = input_.length();
+    if (len != 0 && input_.cursor() == len) {
+        // Trailing identifier word [ws, len): [a-z0-9_]. Must start with
+        // a letter so numeric tails ("1e10") don't query the catalog.
+        size_t ws = len;
+        while (ws > 0) {
+            const char c = text[ws - 1];
+            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_') {
+                --ws;
+            } else {
+                break;
+            }
+        }
+        const size_t wlen = len - ws;
+        if (wlen > 0 && text[ws] >= 'a' && text[ws] <= 'z') {
+            int n = 0;
+            const math::FnDescriptor* cat = math::catalog(&n);
+            for (int i = 0; i < n && suggest_count_ < kMaxSuggest; ++i) {
+                if (std::strncmp(cat[i].name, text + ws, wlen) == 0) {
+                    suggest_items_[suggest_count_] = {cat[i].name, cat[i].signature,
+                                                      cat[i].summary, false};
+                    ++suggest_count_;
+                }
+            }
+            // Commands are whole-line matches (handle_command compares the
+            // trimmed line), so they only offer when the word starts the
+            // line — "2+cl" must not suggest cls. Fills the slots the
+            // function table left behind; narrowing the prefix frees them.
+            if (ws == 0 && g_cmd_hints != nullptr) {
+                for (int i = 0; i < g_cmd_hint_count && suggest_count_ < kMaxSuggest; ++i) {
+                    if (std::strncmp(g_cmd_hints[i].name, text, wlen) == 0) {
+                        suggest_items_[suggest_count_] = {g_cmd_hints[i].name,
+                                                          g_cmd_hints[i].name,
+                                                          g_cmd_hints[i].summary, true};
+                        ++suggest_count_;
+                    }
+                }
+            }
+            if (suggest_count_ > 0) {
+                suggest_word_len_ = static_cast<int>(wlen);
+                suggest_open_ = true;
+            }
+        }
+    }
+
+    if (suggest_open_ || was_open) {
+        invalidate_history();
+    }
+}
+
+void HomeScreen::apply_suggestion() {
+    const SuggestItem& item = suggest_items_[suggest_sel_];
+    char buf[ui::InputLine::kCapacity];
+    const int keep = static_cast<int>(input_.length()) - suggest_word_len_;
+    // Functions complete to a call (cursor-ready inside the parens);
+    // commands are bare words — a paren would break handle_command.
+    std::snprintf(buf, sizeof(buf), "%.*s%s%s", keep, input_.text(), item.name,
+                  item.is_cmd ? "" : "(");
+    input_.set_text(buf);
+    // The pick is final — close without re-querying: a completed command
+    // is its own prefix match ("files" matches "files"), so re-running
+    // update_suggestions() would reopen the popup with just that row.
+    suggest_open_ = false;
+    suggest_count_ = 0;
+    invalidate_input();
+    // The popup was drawn on the history band; dirty it so it erases.
+    invalidate_history();
+}
+
+void HomeScreen::draw_suggestions(gfx::Framebuffer& fb, const gfx::Font& font) const {
+    using namespace platform::colors;
+    if (!suggest_open_) {
+        return;
+    }
+    constexpr int kLineH = 16;
+    constexpr int kSummaryCol = 19;  // same layout as the help FUNC tab
+    const int panel_h = suggest_count_ * kLineH + 6;
+    const int top = kInputY - 2 - panel_h;
+
+    fb.fill_rect(2, top, platform::kScreenW - 4, panel_h, kBlack);
+    fb.draw_rect(2, top, platform::kScreenW - 4, panel_h, kGrayLine);
+
+    for (int i = 0; i < suggest_count_; ++i) {
+        const SuggestItem& item = suggest_items_[i];
+        const int y = top + 3 + i * kLineH;
+        const bool sel = i == suggest_sel_;
+        if (sel) {
+            fb.fill_rect(3, y - 1, platform::kScreenW - 6, kLineH,
+                         platform::Color::from_rgb(0, 0, 90));
+        }
+        // Commands carry the same yellow accent as softkey prefixes, so
+        // the two match sources read apart at a glance.
+        font.draw_string(fb, 8, y, item.display,
+                         sel ? kWhite : (item.is_cmd ? kYellow : kGreen));
+        const int slen = static_cast<int>(std::strlen(item.display));
+        const int col = slen + 1 > kSummaryCol ? slen + 1 : kSummaryCol;
+        font.draw_string(fb, 8 + col * font.width(), y, item.summary,
+                         sel ? kWhite : kGrayLine);
+    }
 }
 
 bool HomeScreen::on_key(const platform::KeyEvent& ev) {
@@ -880,11 +1019,26 @@ bool HomeScreen::on_key(const platform::KeyEvent& ev) {
                 invalidate(0, kSoftkeyY);
                 return true;
             }
+            if (suggest_open_) {
+                // Complete the input from the selected match instead of
+                // submitting — one ENTER inserts, the next one runs it.
+                apply_suggestion();
+                return true;
+            }
             if (!input_.empty()) {
                 submit_input();
+                suggest_open_ = false;
             }
             return true;
         case Key::kUp:
+            // The suggestion popup owns plain UP/DOWN while open
+            // (cycling its selection, wrapping); modifiers keep their
+            // history-scroll meaning so the view stays reachable.
+            if (suggest_open_ && !ev.alt_held && !ev.ctrl_held && !ev.shift_held) {
+                suggest_sel_ = (suggest_sel_ + suggest_count_ - 1) % suggest_count_;
+                invalidate(kStatusH, kInputY);
+                return true;
+            }
             // Modifier+UP scrolls the history view; plain UP walks back
             // through past inputs shell-style (supersedes task 5.5's
             // single-recall). Alt/Ctrl, because the STM32 swallows
@@ -906,9 +1060,15 @@ bool HomeScreen::on_key(const platform::KeyEvent& ev) {
                 ++hist_nav_;
                 input_.set_text(entry_from_newest(hist_nav_)->expr);
                 invalidate_input();
+                update_suggestions();
             }
             return true;
         case Key::kDown:
+            if (suggest_open_ && !ev.alt_held && !ev.ctrl_held && !ev.shift_held) {
+                suggest_sel_ = (suggest_sel_ + 1) % suggest_count_;
+                invalidate(kStatusH, kInputY);
+                return true;
+            }
             if (ev.alt_held || ev.ctrl_held || ev.shift_held) {
                 if (scroll_ > 0) {
                     --scroll_;
@@ -918,10 +1078,12 @@ bool HomeScreen::on_key(const platform::KeyEvent& ev) {
                 --hist_nav_;
                 input_.set_text(entry_from_newest(hist_nav_)->expr);
                 invalidate_input();
+                update_suggestions();
             } else if (hist_nav_ == 0) {
                 hist_nav_ = -1;
                 input_.set_text(pending_);
                 invalidate_input();
+                update_suggestions();
             }
             return true;
         case Key::kLeft:
@@ -946,10 +1108,20 @@ bool HomeScreen::on_key(const platform::KeyEvent& ev) {
             }
             if (input_.on_key(ev)) {
                 invalidate_input();
+                // Cursor moved into the line: the popup's trailing-word
+                // model no longer describes the position — close it.
+                update_suggestions();
                 return true;
             }
             return false;
         case Key::kEscape:
+            if (suggest_open_) {
+                // Dismiss the popup only; the typed input survives so
+                // typing can continue unfiltered.
+                suggest_open_ = false;
+                invalidate(kStatusH, kInputY);
+                return true;
+            }
             input_.clear();
             hist_nav_ = -1;
             invalidate_input();
@@ -977,6 +1149,9 @@ bool HomeScreen::on_key(const platform::KeyEvent& ev) {
         default:
             if (input_.on_key(ev)) {
                 invalidate_input();
+                // Typing path: live-filter the popup from the new
+                // trailing word (opens it when a match appears).
+                update_suggestions();
                 return true;
             }
             return false;
@@ -1090,6 +1265,9 @@ void HomeScreen::render(gfx::Framebuffer& fb) {
     }
     const char* const keys[6] = {f1, "WIN", "MODE", "TRC", "GRPH", "CAS"};
     ui::draw_softkeys(fb, keys);
+
+    // Suggestion popup last, above everything it floats over.
+    draw_suggestions(fb, font);
 }
 
 HomeScreen& home_screen() {

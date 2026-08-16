@@ -12,6 +12,19 @@ namespace apps {
 // inject echo needs no #if around the call itself.
 uint32_t home_eval_us();
 
+// One row of the (externally installed) command hint table that the
+// suggestion popup also matches against: typed commands like cls/files/
+// stats. Host build installs the table at boot (compiled defaults +
+// user-editable commands.txt); the firmware leaves it unset.
+struct CommandHint {
+    const char* name;
+    const char* summary;
+};
+
+// Installs the table consulted by the suggestion popup. Pointers must
+// point at storage that outlives the program (static arrays).
+void set_command_hints(const CommandHint* items, int count);
+
 // Calculator home screen (task 2.5): expression input at the bottom,
 // scrollable history above, results via math::Engine.
 class HomeScreen : public ui::Screen {
@@ -91,6 +104,28 @@ private:
     char result_full_[128] = {};
     int result_scroll_ = 0;  // Char offset of the visible window's left edge
 
+    // Input-line suggestion popup (2026-08-16): while typing, the trailing
+    // word is prefix-matched against math::catalog (the help FUNC tab's own
+    // table) and — when the word starts the line — the installed command
+    // hint table; matches float above the input line. UP/DOWN cycle the
+    // selection (wrapping), ENTER completes the input ("name(" for
+    // functions, the bare name for commands), ESC dismisses the popup
+    // without touching the input. Typing continues to filter live. Only
+    // opens with the cursor at end-of-line (the typing position); cursor
+    // movement closes it.
+    struct SuggestItem {
+        const char* name;     // Completion target ("sin", "cls")
+        const char* display;  // Left column ("sin(x)", "cls")
+        const char* summary;
+        bool is_cmd;          // Command hint (yellow) vs function (green)
+    };
+    static constexpr int kMaxSuggest = 6;
+    bool suggest_open_ = false;
+    int suggest_sel_ = 0;
+    int suggest_count_ = 0;
+    int suggest_word_len_ = 0;  // Trailing word length replaced on completion
+    SuggestItem suggest_items_[kMaxSuggest] = {};
+
     ui::InputLine input_;
 
     void invalidate_input();
@@ -124,6 +159,13 @@ private:
     void load_variables();
 
     const Entry* entry_from_newest(int n) const;
+
+    // Suggestion popup: recompute matches from the input's trailing word
+    // (called after any input change), complete the input from the selected
+    // match, and draw the popup above the input line.
+    void update_suggestions();
+    void apply_suggestion();
+    void draw_suggestions(gfx::Framebuffer& fb, const gfx::Font& font) const;
 };
 
 HomeScreen& home_screen();
