@@ -59,6 +59,20 @@ bool sdl_init() {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return false;
     }
+
+    // X11 keyboard auto-repeat is sometimes off by default (X server
+    // or WM configuration). Without it, held keys never repeat, which
+    // breaks the calculator UI. The KMSDRM backend is unaffected
+    // because the kernel's evdev auto-repeat is independent.
+    if (SDL_GetCurrentVideoDriver() && SDL_strcmp(SDL_GetCurrentVideoDriver(), "x11") == 0) {
+        // Use xset for the X11 protocol call. A subprocess isn't elegant
+        // but it avoids pulling in X11 headers for a one-shot call.
+        // The "2>/dev/null" silences stderr on systems without xset.
+        if (system("xset r on 2>/dev/null") != 0) {
+            SDL_Log("xset r on failed (non-fatal, X11 auto-repeat may not repeat)");
+        }
+    }
+
     return true;
 }
 
