@@ -32,9 +32,11 @@ Linux SDL2 application, cross-built with the armv7 hard-float toolchain.
 Notable host details:
 
 - **Zero link-time dependencies beyond libc/libstdc++/libm/pthread.**
-  SDL2 is statically linked and X11 is resolved at runtime through
-  SDL's `X11_SHARED` dlopen mechanism; ALSA is likewise dlopen'd at
-  runtime. The binary drops onto the device as-is.
+  SDL2 is statically linked; X11 and KMSDRM (libdrm/libgbm/EGL) are
+  resolved at runtime through SDL's `X11_SHARED`/`KMSDRM_SHARED` dlopen
+  mechanisms; ALSA is likewise dlopen'd at runtime. The binary drops
+  onto the device as-is and runs both inside the desktop and bare on
+  the console.
 - **Custom-keyboard shift translation.** The stock keyboard firmware
   runs its own modifier state machine and reports cooked characters;
   a customized firmware (as used here) disables that and passes raw
@@ -85,33 +87,66 @@ toolchain. Two one-time setups: the cross libc, and a static SDL2.
 sudo apt install g++-arm-linux-gnueabihf cmake ninja-build
 ```
 
-### 2. Static SDL2 + X11 stubs (once)
+### 2. Static SDL2 (X11 + KMSDRM, once)
 
-SDL2 is built from source with a minimal feature set (X11 video via
-runtime dlopen, software renderer, **no audio/joystick/GL**) and
-installed to `host/deps/sdl2-install`. The X11 headers and link stubs
-come from the device's own packages and live in `host/sysroot` (pull
-them once: `scp` the device's `/usr/include/X11` and the
-`/usr/lib/arm-linux-gnueabihf/libX*.so` stubs over, or install
-`libsdl2-dev` into a sysroot).
+SDL2 is built from source with a minimal feature set (**no
+audio/joystick/desktop GL**, software renderer only) and installed to
+`host/deps/sdl2-install`. Two video backends are compiled in: X11
+(dlopen'd at runtime via `X11_SHARED`) and KMSDRM for running bare on
+the console (libdrm/libgbm/EGL likewise dlopen'd via `KMSDRM_SHARED`,
+so nothing extra is linked in).
+
+The headers and link stubs live in `host/sysroot`, pulled once from
+the device itself:
+
+```bash
+# X11: headers + versionless .so stubs
+ssh dev 'cd /usr && tar cf - include/X11 lib/arm-linux-gnueabihf/libX*.so*' \
+    | tar xf - -C host/sysroot   # adjust include/lib layout to match
+# KMSDRM: libdrm/gbm headers + stubs (device keeps some headers at the
+# include/ root and some under include/libdrm/, include/drm/ is the
+# kernel UAPI)
+ssh dev 'cd /usr && tar cf - include/libdrm include/drm include/xf86drm.h \
+    include/xf86drmMode.h include/gbm.h lib/arm-linux-gnueabihf/libdrm.so* \
+    lib/arm-linux-gnueabihf/libgbm.so*' | tar xf - -C host/sysroot
+```
+
+`host/sysroot/lib/pkgconfig/` contains hand-written `libdrm.pc`,
+`gbm.pc` and `egl.pc` stubs (committed) so the cross build's
+pkg-config resolves them instead of the host x86-64 packages —
+`PKG_CONFIG_LIBDIR` below points the SDL build at exactly those.
 
 ```bash
 cd host
 tar xf deps/SDL2-2.30.0.tar.gz -C deps   # if not already extracted
+PKG_CONFIG_LIBDIR=$PWD/sysroot/lib/pkgconfig \
 cmake -G Ninja -B deps/sdl2-build -S deps/SDL2-2.30.0 \
       -DCMAKE_TOOLCHAIN_FILE=$PWD/armv7-sdl-toolchain.cmake \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX=$PWD/deps/sdl2-install \
+      '-DCMAKE_C_FLAGS=-DSDL_VIDEO_DRIVER_X11_SUPPORTS_GENERIC_EVENTS' \
       -DSDL_SHARED=OFF -DSDL_STATIC=ON \
-      -DSDL_TEST=OFF -DSDL_OPENGL=OFF -DSDL_OPENGLES=OFF \
+      -DSDL_TEST=OFF -DSDL_OPENGL=OFF -DSDL_OPENGLES=ON \
       -DSDL_AUDIO=OFF -DSDL_JOYSTICK=OFF -DSDL_HAPTIC=OFF \
       -DSDL_SENSOR=OFF -DSDL_RENDER=ON -DSDL_VIDEO=ON \
       -DSDL_X11=ON -DSDL_X11_SHARED=ON \
+      -DSDL_KMSDRM=ON -DSDL_KMSDRM_SHARED=ON \
       -DSDL_CLOCK_GETTIME=ON -DSDL_LIBC=ON -DSDL_THREADS=ON \
       -DSDL_TIMERS=ON -DSDL_FILESYSTEM=ON -DSDL_LOADSO=ON
 cmake --build deps/sdl2-build
 cmake --install deps/sdl2-build
 ```
+
+Build-flag notes:
+
+- `SDL_OPENGLES=ON` exists only to satisfy SDL's KMSDRM gate (it
+  requires EGL headers); the app itself never creates a GL context —
+  it pins `SDL_RENDERER_SOFTWARE`, which is also what keeps X11
+  rendering correct when an EGL-backed renderer would otherwise get
+  picked.
+- `-DSDL_VIDEO_DRIVER_X11_SUPPORTS_GENERIC_EVENTS` skips SDL's
+  link-time Xlib probe (which fails against the stub sysroot); the
+  symbol is resolved through SDL's runtime dlopen table instead.
 
 ### 3. Build the app
 
@@ -130,14 +165,29 @@ cmake --build host/build
 
 ```bash
 scp host/build/gc-host user@lyra:~/gc-host
-ssh user@lyra 'DISPLAY=:0 ~/gc-host'
 ```
+
+The same binary runs in two shapes:
+
+```bash
+~/gc-host                                   # inside the desktop: X11 window
+env -u DISPLAY SDL_VIDEODRIVER=kmsdrm ~/gc-host   # bare console: KMSDRM fullscreen
+```
+
+Backend selection follows SDL's defaults: `DISPLAY` set → X11, unset →
+KMSDRM (`SDL_VIDEODRIVER` forces it either way). KMSDRM needs DRM
+master, so stop X first (`pkill xinit`; `setsid startx` brings it
+back). Console keyboard input works because the app pre-sets
+`SDL_EVDEV_DEVICES=2:/dev/input/event0` (class 2 = keyboard) before
+`SDL_Init` — SDL is built without libudev, and in that configuration
+its evdev core never scans `/dev/input` on its own.
 
 Runtime knobs:
 
 | Env / flag | Effect |
 |---|---|
-| `DISPLAY=:0` | Required — X11 app (no console/framebuffer path) |
+| `DISPLAY` | Set → X11 window; unset → KMSDRM fullscreen (`SDL_VIDEODRIVER` overrides) |
+| `SDL_EVDEV_DEVICES` | Pre-set by the app (`2:/dev/input/event0`); export your own to override |
 | `--uart-inject` | Enable the stdin line protocol (`files`, `5+5`, …) for scripting |
 | `PICOCALC_ALSA_DEVICE` | ALSA PCM for beeps (default `default`; e.g. `sysdefault:CARD=picocalcsndpwm`) |
 

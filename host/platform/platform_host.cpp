@@ -4,6 +4,8 @@
 
 #include "platform/platform.hpp"
 
+#include <cstdlib>
+
 #include <SDL2/SDL.h>
 
 #include "gfx/framebuffer.hpp"
@@ -43,6 +45,16 @@ void request_exit() {
 }
 
 bool sdl_init() {
+    // SDL is built without libudev, and in that configuration its evdev
+    // core never scans /dev/input by itself (SDL_evdev.c: "TODO: Scan the
+    // devices manually, like a caveman"). The KMSDRM backend would then
+    // come up with a dead keyboard. Hand it the device explicitly:
+    // class 2 is SDL_UDEV_DEVICE_KEYBOARD, and event0 is the board's
+    // picocalc-keyboard (the only input node on this device). Harmless
+    // under X11, whose backend reads keys from the X server instead.
+    // overwrite=0 so the environment can override.
+    setenv("SDL_EVDEV_DEVICES", "2:/dev/input/event0", 0);
+
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) != 0) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return false;
