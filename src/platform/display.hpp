@@ -32,6 +32,9 @@ constexpr Color kCursor = Color::from_rgb(0, 120, 215);
 // reads clearly against the gray input and white numeric results (teal was too
 // close to the input color on the panel — HW 2026-08-02).
 constexpr Color kSymbolic = Color::from_rgb(255, 190, 40);
+// Softkey hint prefixes ("3:" in "3:MODE") — TI-style accent separating the
+// key number from the function label.
+constexpr Color kYellow = Color::from_rgb(255, 210, 0);
 }  // namespace colors
 
 // Low-level LCD transport. Pixel buffering and drawing primitives live in

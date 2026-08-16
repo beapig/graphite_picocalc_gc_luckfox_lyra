@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "gfx/font.hpp"
+#include "ui/chrome.hpp"
 #include "ui/screen_manager.hpp"
 #include "math/engine.hpp"
 #include "math/format.hpp"
@@ -116,14 +117,10 @@ bool WindowScreen::on_key(const platform::KeyEvent& ev) {
 
     switch (ev.key) {
         case Key::kUp:
-            if (selected_ > 0) {
-                --selected_;
-            }
+            selected_ = (selected_ + field_count() - 1) % field_count();
             return true;
         case Key::kDown:
-            if (selected_ < field_count() - 1) {
-                ++selected_;
-            }
+            selected_ = (selected_ + 1) % field_count();
             return true;
         case Key::kEnter:
             begin_edit();
@@ -197,9 +194,7 @@ void WindowScreen::render(gfx::Framebuffer& fb) {
         }
     }
 
-    const int sk = platform::kScreenH - 20;
-    fb.fill_rect(0, sk, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-    font.draw_string(fb, 2, sk + 4, "ENTER:EDIT DEL:CLR F5:GRPH ESC:BACK", kGrayLine);
+    ui::draw_hint_bar(fb, "ENTER:EDIT DEL:CLR F5:GRPH ESC:BACK");
 }
 
 WindowScreen& window_screen() {

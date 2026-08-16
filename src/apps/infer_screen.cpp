@@ -606,8 +606,7 @@ void InferScreen::render(gfx::Framebuffer& fb) {
         for (int i = 0; i < line_count_; ++i) {
             font.draw_string(fb, 8, kResTopY + i * kResRowH, lines_[i], i == 0 ? kGreen : kWhite);
         }
-        fb.fill_rect(0, kSoftkeyY, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-        font.draw_string(fb, 2, kSoftkeyY + 4, "ESC:BACK", kGrayLine);
+        ui::draw_hint_bar(fb, "ESC:BACK");
         return;
     }
 
@@ -668,8 +667,7 @@ void InferScreen::render(gfx::Framebuffer& fb) {
         font.draw_string(fb, 10, my, msg_, kRed);
     }
 
-    fb.fill_rect(0, kSoftkeyY, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-    font.draw_string(fb, 2, kSoftkeyY + 4, "L/R:CHANGE ENTER:EDIT/CALC ESC:BACK", kGrayLine);
+    ui::draw_hint_bar(fb, "L/R:CHANGE ENTER:EDIT/CALC ESC:BACK");
 }
 
 InferScreen& infer_screen() {

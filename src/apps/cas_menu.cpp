@@ -86,8 +86,7 @@ void CasMenuScreen::render(gfx::Framebuffer& fb) {
         font.draw_string(fb, 24, y, line, i == sel_ ? kWhite : kGrayLine);
     }
 
-    fb.fill_rect(0, kSoftkeyY, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-    font.draw_string(fb, 2, kSoftkeyY + 4, "1-6/ENTER:INSERT ESC:BACK", kGrayLine);
+    ui::draw_hint_bar(fb, "1-6/ENTER:INSERT ESC:BACK");
 }
 
 CasMenuScreen& cas_menu() {

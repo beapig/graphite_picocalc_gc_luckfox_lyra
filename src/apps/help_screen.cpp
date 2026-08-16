@@ -323,9 +323,7 @@ void HelpScreen::render(gfx::Framebuffer& fb) {
         font.draw_string(fb, platform::kScreenW - 4 - font.text_width(pos), 2, pos, kGrayLine);
     }
 
-    const int sk = platform::kScreenH - 20;
-    fb.fill_rect(0, sk, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-    font.draw_string(fb, 2, sk + 4, "LT/RT:TAB  UP/DN:SCROLL  ESC:BACK", kGrayLine);
+    ui::draw_hint_bar(fb, "LT/RT:TAB  UP/DN:SCROLL  ESC:BACK");
 }
 
 HelpScreen& help_screen() {

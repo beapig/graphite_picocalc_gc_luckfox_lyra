@@ -368,8 +368,7 @@ void StatsScreen::render(gfx::Framebuffer& fb) {
             font.draw_string(fb, platform::kScreenW - 12, kResTopY + (kResVisible - 1) * kResRowH,
                              scroll_ < line_count_ - kResVisible ? "v" : " ", kGrayLine);
         }
-        fb.fill_rect(0, kSoftkeyY, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-        font.draw_string(fb, 2, kSoftkeyY + 4, "UP/DOWN:SCROLL ESC:BACK", kGrayLine);
+        ui::draw_hint_bar(fb, "UP/DOWN:SCROLL ESC:BACK");
         return;
     }
 
@@ -432,8 +431,7 @@ void StatsScreen::render(gfx::Framebuffer& fb) {
         font.draw_string(fb, 12, hint_y + 20, msg_, kRed);
     }
 
-    fb.fill_rect(0, kSoftkeyY, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-    font.draw_string(fb, 2, kSoftkeyY + 4, "L/R:CHANGE ENTER:CALC ESC:BACK", kGrayLine);
+    ui::draw_hint_bar(fb, "L/R:CHANGE ENTER:CALC ESC:BACK");
 }
 
 StatsScreen& stats_screen() {

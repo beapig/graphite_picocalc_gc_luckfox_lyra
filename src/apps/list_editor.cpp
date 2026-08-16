@@ -417,6 +417,14 @@ bool ListEditorScreen::on_key(const platform::KeyEvent& ev) {
                     invalidate_row(cur_row_ - row_off_);
                 }
                 invalidate_entry();
+            } else {
+                // Wrap to the append row (last), snapping the view
+                // to the bottom of the list.
+                cur_row_ = count;
+                row_off_ = std::max(0, count + 1 - kVisibleRows);
+                refresh_cells();
+                invalidate_grid();
+                invalidate_entry();
             }
             return true;
         case Key::kDown:
@@ -436,15 +444,19 @@ bool ListEditorScreen::on_key(const platform::KeyEvent& ev) {
                     invalidate_row(cur_row_ - row_off_);
                 }
                 invalidate_entry();
+            } else {
+                // Wrap back to the top row, snapping the view up.
+                cur_row_ = 0;
+                row_off_ = 0;
+                refresh_cells();
+                invalidate_grid();
+                invalidate_entry();
             }
             return true;
         case Key::kLeft:
         case Key::kRight: {
             const int dir = ev.key == Key::kRight ? 1 : -1;
-            const int next = cur_list_ + dir;
-            if (next < 0 || next >= total_cols()) {
-                return true;
-            }
+            const int next = (cur_list_ + dir + total_cols()) % total_cols();
             cur_list_ = next;
             if (cur_list_ < col_off_) {
                 col_off_ = cur_list_;
@@ -610,8 +622,7 @@ void ListEditorScreen::render(gfx::Framebuffer& fb) {
         font.draw_string(fb, platform::kScreenW - font.text_width(msg_) - 4, ty, msg_, kRed);
     }
 
-    fb.fill_rect(0, kSoftkeyY, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-    font.draw_string(fb, 2, kSoftkeyY + 4, "ENTER:EDIT DEL:ROW F6/F7:SORT Alt+N:NEW", kGrayLine);
+    ui::draw_hint_bar(fb, "ENTER:EDIT DEL:ROW F6/F7:SORT Alt+N:NEW");
 }
 
 ListEditorScreen& list_editor() {

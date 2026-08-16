@@ -2,7 +2,14 @@
 
 #include <cstdio>
 
+#if !PICOCALC_HOST
 #include "pico/bootrom.h"
+#else
+namespace host {
+// host/platform_host.cpp — sets the quit flag the main loop polls.
+void request_exit();
+}  // namespace host
+#endif
 
 #include "gfx/font.hpp"
 #include "ui/chrome.hpp"
@@ -88,14 +95,10 @@ bool ModeScreen::on_key(const platform::KeyEvent& ev) {
     }
     switch (ev.key) {
         case Key::kUp:
-            if (selected_ > 0) {
-                --selected_;
-            }
+            selected_ = (selected_ + kNumRows - 1) % kNumRows;
             return true;
         case Key::kDown:
-            if (selected_ < kNumRows - 1) {
-                ++selected_;
-            }
+            selected_ = (selected_ + 1) % kNumRows;
             return true;
         case Key::kLeft:
             adjust(-1);
@@ -105,9 +108,15 @@ bool ModeScreen::on_key(const platform::KeyEvent& ev) {
             return true;
         case Key::kEnter:
             if (selected_ == kRowReboot) {
+#if PICOCALC_HOST
+                // No BOOTSEL on a Linux host — exit the application
+                // cleanly instead (the main loop saves state).
+                host::request_exit();
+#else
                 // Reboot into the RP2 USB bootloader (BOOTSEL) so a new
                 // UF2 can be dropped without touching the board button.
                 reset_usb_boot(0, 0);
+#endif
             } else {
                 adjust(+1);
             }
@@ -134,7 +143,11 @@ void ModeScreen::render(gfx::Framebuffer& fb) {
         {"Graph mode", nullptr},
         {"Number", nullptr},
         {"Seq plot", nullptr},
+#if PICOCALC_HOST
+        {"Exit application", nullptr},
+#else
         {"Reboot to bootloader", nullptr},
+#endif
     };
 
     char angle_val[8];

@@ -176,16 +176,12 @@ bool SolverScreen::on_key(const platform::KeyEvent& ev) {
 
     switch (ev.key) {
         case Key::kUp:
-            if (row_ > 0) {
-                --row_;
-                invalidate_all();
-            }
+            row_ = (row_ + kRowCount - 1) % kRowCount;
+            invalidate_all();
             return true;
         case Key::kDown:
-            if (row_ < kRowCount - 1) {
-                ++row_;
-                invalidate_all();
-            }
+            row_ = (row_ + 1) % kRowCount;
+            invalidate_all();
             return true;
         case Key::kLeft:
         case Key::kRight:
@@ -305,8 +301,7 @@ void SolverScreen::render(gfx::Framebuffer& fb) {
         font.draw_string(fb, 12, ry, msg_, kRed);
     }
 
-    fb.fill_rect(0, kSoftkeyY, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-    font.draw_string(fb, 2, kSoftkeyY + 4, "ENTER:EDIT/SOLVE DEL:CLEAR ESC:BACK", kGrayLine);
+    ui::draw_hint_bar(fb, "ENTER:EDIT/SOLVE DEL:CLEAR ESC:BACK");
 }
 
 SolverScreen& solver_screen() {

@@ -30,4 +30,11 @@ void set_health_flags(bool sd_ok, bool psram_ok);
 // empty entry leaves that slot blank.
 void draw_softkeys(gfx::Framebuffer& fb, const char* const labels[6]);
 
+// Draw a free-form hint line in the bottom 20px bar (sub-screens that
+// don't use the F-key grid, e.g. "ENTER:EDIT DEL:CLR F5:GRPH ESC:BACK").
+// Segments before each ':' (the key name) render in kYellow; the ':'
+// itself and the text after render in kGrayLine. Background is the
+// shared dark bar fill.
+void draw_hint_bar(gfx::Framebuffer& fb, const char* text);
+
 }  // namespace ui

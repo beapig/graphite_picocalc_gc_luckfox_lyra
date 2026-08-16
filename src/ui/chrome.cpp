@@ -126,16 +126,74 @@ void draw_softkeys(gfx::Framebuffer& fb, const char* const labels[6]) {
         if (labels[i] == nullptr || labels[i][0] == 0) {
             continue;
         }
-        char cell_text[16];
-        std::snprintf(cell_text, sizeof(cell_text), "%d:%s", i + 1, labels[i]);
-        // Truncate to fit the cell.
-        const int max_chars = (cell - 2) / font.width();
-        if (static_cast<int>(std::strlen(cell_text)) > max_chars && max_chars > 0) {
-            cell_text[max_chars] = 0;
+        const int x = i * cell + 2;
+        char prefix[4];
+        std::snprintf(prefix, sizeof(prefix), "%d:", i + 1);
+        // Truncate the label to fit the cell after the 2-char prefix.
+        const int max_chars = (cell - 2) / font.width() - 2;
+        char label[16];
+        std::snprintf(label, sizeof(label), "%s", labels[i]);
+        if (static_cast<int>(std::strlen(label)) > max_chars && max_chars > 0) {
+            label[max_chars] = 0;
         }
-        font.draw_string(fb, i * cell + 2, y + 4, cell_text, kGrayLine);
+        font.draw_string(fb, x, y + 4, prefix, kYellow);
+        font.draw_string(fb, x + 2 * font.width(), y + 4, label, kGrayLine);
         if (i > 0) {
             fb.draw_vline(i * cell, y, kSoftkeyBarH, kBlack);
+        }
+    }
+}
+
+void draw_hint_bar(gfx::Framebuffer& fb, const char* text) {
+    using namespace platform::colors;
+    const auto& font = gfx::main_font();
+
+    const int y = platform::kScreenH - kSoftkeyBarH;
+    fb.fill_rect(0, y, platform::kScreenW, kSoftkeyBarH, kBarBg);
+
+    // Split on spaces; within each token the part up to and including
+    // ':' is the key hint (yellow), the rest is the action (gray).
+    // Tokens without ':' render entirely gray and degrade gracefully.
+    int x = 2;
+    const int cw = font.width();
+    const char* p = text;
+    char tok[24];
+    while (*p != 0 && x < platform::kScreenW - cw) {
+        const char* start = p;
+        while (*p != 0 && *p != ' ') {
+            ++p;
+        }
+        int tok_len = static_cast<int>(p - start);
+        if (tok_len >= static_cast<int>(sizeof(tok))) {
+            tok_len = sizeof(tok) - 1;
+        }
+        std::memcpy(tok, start, static_cast<size_t>(tok_len));
+        tok[tok_len] = 0;
+
+        const char* colon = static_cast<const char*>(
+            std::memchr(tok, ':', static_cast<size_t>(tok_len)));
+        if (colon != nullptr) {
+            // "KEY:ACTION" — key name plus the colon is the yellow part,
+            // the action word is white.
+            const int key_len = static_cast<int>(colon - tok) + 1;
+            const int rest_len = tok_len - key_len;
+            char key[24];
+            char rest[24];
+            std::memcpy(key, tok, static_cast<size_t>(key_len));
+            key[key_len] = 0;
+            std::memcpy(rest, colon + 1, static_cast<size_t>(rest_len));
+            rest[rest_len] = 0;
+            font.draw_string(fb, x, y + 4, key, kYellow);
+            x += key_len * cw;
+            font.draw_string(fb, x, y + 4, rest, kWhite);
+            x += rest_len * cw;
+        } else {
+            font.draw_string(fb, x, y + 4, tok, kWhite);
+            x += tok_len * cw;
+        }
+        if (*p == ' ') {
+            x += cw;  // One full character cell of separation.
+            ++p;
         }
     }
 }

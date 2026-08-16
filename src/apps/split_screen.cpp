@@ -1,6 +1,7 @@
 #include "apps/split_screen.hpp"
 
 #include "gfx/font.hpp"
+#include "ui/chrome.hpp"
 #include "ui/screen_manager.hpp"
 #include "apps/graph_screen.hpp"
 #include "apps/table_screen.hpp"
@@ -89,13 +90,8 @@ void SplitScreen::render(gfx::Framebuffer& fb) {
     const int focus_y = graph_focused_ ? kDividerY : kTableY - 1;
     fb.draw_hline(0, focus_y, platform::kScreenW, kWhite);
 
-    // Softkey bar.
-    const int sk = platform::kScreenH - 20;
-    fb.fill_rect(0, sk, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-    font.draw_string(fb, 2, sk + 4,
-                     graph_focused_ ? "[GRAPH] F4:TRC F5:PANE aF5/ESC:FULL"
-                                    : "[TABLE] F2:SETP F5:PANE aF5/ESC:FULL",
-                     kGrayLine);
+    ui::draw_hint_bar(fb, graph_focused_ ? "[GRAPH] F4:TRC F5:PANE aF5/ESC:FULL"
+                                         : "[TABLE] F2:SETP F5:PANE aF5/ESC:FULL");
 }
 
 SplitScreen& split_screen() {

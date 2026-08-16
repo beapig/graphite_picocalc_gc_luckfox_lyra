@@ -1,5 +1,6 @@
 #include "apps/const_screen.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -92,22 +93,16 @@ bool ConstScreen::on_key(const platform::KeyEvent& ev) {
     const auto* cs = math::constants(&count);
     switch (ev.key) {
         case Key::kUp:
-            if (selected_ > 0) {
-                --selected_;
-                top_ = selected_ < top_ ? selected_ : top_;
-                desc_scroll_ = 0;
-                invalidate_all();
-            }
+            selected_ = (selected_ + count - 1) % count;
+            top_ = std::clamp(top_, std::max(0, selected_ - kVisibleRows + 1), selected_);
+            desc_scroll_ = 0;
+            invalidate_all();
             return true;
         case Key::kDown:
-            if (selected_ + 1 < count) {
-                ++selected_;
-                if (selected_ - top_ >= kVisibleRows) {
-                    top_ = selected_ - kVisibleRows + 1;
-                }
-                desc_scroll_ = 0;
-                invalidate_all();
-            }
+            selected_ = (selected_ + 1) % count;
+            top_ = std::clamp(top_, std::max(0, selected_ - kVisibleRows + 1), selected_);
+            desc_scroll_ = 0;
+            invalidate_all();
             return true;
         case Key::kLeft:
             if (desc_scroll_ > 0) {
@@ -170,9 +165,7 @@ void ConstScreen::render(gfx::Framebuffer& fb) {
         font.draw_string(fb, kSummaryX, y, summary, kGrayLine);
     }
 
-    const int sk = platform::kScreenH - 20;
-    fb.fill_rect(0, sk, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-    font.draw_string(fb, 2, sk + 4, "ENTER:INSERT <>:DESC ESC:BACK", kGrayLine);
+    ui::draw_hint_bar(fb, "ENTER:INSERT <>:DESC ESC:BACK");
 }
 
 ConstScreen& const_screen() {

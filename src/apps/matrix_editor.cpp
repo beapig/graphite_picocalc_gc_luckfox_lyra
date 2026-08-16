@@ -332,40 +332,32 @@ bool MatrixEditorScreen::on_key(const platform::KeyEvent& ev) {
     const auto& m = current();
     switch (ev.key) {
         case Key::kUp:
-            if (cur_row_ > 0) {
-                --cur_row_;
-                clamp_cursor();
-                refresh_cells();
-                invalidate_grid();
-                invalidate_entry();
-            }
+            cur_row_ = (cur_row_ + m.dim(0) - 1) % m.dim(0);
+            clamp_cursor();
+            refresh_cells();
+            invalidate_grid();
+            invalidate_entry();
             return true;
         case Key::kDown:
-            if (cur_row_ + 1 < m.dim(0)) {
-                ++cur_row_;
-                clamp_cursor();
-                refresh_cells();
-                invalidate_grid();
-                invalidate_entry();
-            }
+            cur_row_ = (cur_row_ + 1) % m.dim(0);
+            clamp_cursor();
+            refresh_cells();
+            invalidate_grid();
+            invalidate_entry();
             return true;
         case Key::kLeft:
-            if (cur_col_ > 0) {
-                --cur_col_;
-                clamp_cursor();
-                refresh_cells();
-                invalidate_grid();
-                invalidate_entry();
-            }
+            cur_col_ = (cur_col_ + m.dim(1) - 1) % m.dim(1);
+            clamp_cursor();
+            refresh_cells();
+            invalidate_grid();
+            invalidate_entry();
             return true;
         case Key::kRight:
-            if (cur_col_ + 1 < m.dim(1)) {
-                ++cur_col_;
-                clamp_cursor();
-                refresh_cells();
-                invalidate_grid();
-                invalidate_entry();
-            }
+            cur_col_ = (cur_col_ + 1) % m.dim(1);
+            clamp_cursor();
+            refresh_cells();
+            invalidate_grid();
+            invalidate_entry();
             return true;
         case Key::kTab:
             cur_slot_ = (cur_slot_ + 1) % (kAnsSlot + 1);
@@ -494,8 +486,7 @@ void MatrixEditorScreen::render(gfx::Framebuffer& fb) {
         font.draw_string(fb, platform::kScreenW - font.text_width(msg_) - 4, ty, msg_, kRed);
     }
 
-    fb.fill_rect(0, kSoftkeyY, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-    font.draw_string(fb, 2, kSoftkeyY + 4, "TAB:MAT ENTER:EDIT F7:DIM F8:CLR", kGrayLine);
+    ui::draw_hint_bar(fb, "TAB:MAT ENTER:EDIT F7:DIM F8:CLR");
 }
 
 MatrixEditorScreen& matrix_editor() {

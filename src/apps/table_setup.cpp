@@ -4,6 +4,7 @@
 #include <cstdlib>
 
 #include "gfx/font.hpp"
+#include "ui/chrome.hpp"
 #include "ui/screen_manager.hpp"
 #include "math/engine.hpp"
 #include "math/format.hpp"
@@ -70,14 +71,10 @@ bool TableSetupScreen::on_key(const platform::KeyEvent& ev) {
 
     switch (ev.key) {
         case Key::kUp:
-            if (selected_ > 0) {
-                --selected_;
-            }
+            selected_ = (selected_ + kNumRows - 1) % kNumRows;
             return true;
         case Key::kDown:
-            if (selected_ < kNumRows - 1) {
-                ++selected_;
-            }
+            selected_ = (selected_ + 1) % kNumRows;
             return true;
         case Key::kLeft:
         case Key::kRight:
@@ -143,9 +140,7 @@ void TableSetupScreen::render(gfx::Framebuffer& fb) {
     font.draw_string(fb, 12, kTopY + kNumRows * kRowH + 8, "ENTER edit/toggle   ESC back to table",
                      kGrayLine);
 
-    const int sk = platform::kScreenH - 20;
-    fb.fill_rect(0, sk, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-    font.draw_string(fb, 2, sk + 4, "ENTER:EDIT DEL:CLR ESC:BACK", kGrayLine);
+    ui::draw_hint_bar(fb, "ENTER:EDIT DEL:CLR ESC:BACK");
 }
 
 TableSetupScreen& table_setup_screen() {

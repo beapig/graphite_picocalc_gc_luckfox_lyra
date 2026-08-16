@@ -166,14 +166,10 @@ bool PlotScreen::on_key(const platform::KeyEvent& ev) {
 
     switch (ev.key) {
         case Key::kUp:
-            if (row_ > 0) {
-                --row_;
-            }
+            row_ = (row_ + rows - 1) % rows;
             return true;
         case Key::kDown:
-            if (row_ < rows - 1) {
-                ++row_;
-            }
+            row_ = (row_ + 1) % rows;
             return true;
         case Key::kLeft:
             if (!bin_row) {
@@ -286,8 +282,7 @@ void PlotScreen::render(gfx::Framebuffer& fb) {
     font.draw_string(fb, 12, hy, "Graph: plots draw with funcs;", kGridLine);
     font.draw_string(fb, 12, hy + 18, "Z on graph = ZoomStat", kGridLine);
 
-    fb.fill_rect(0, kSoftkeyY, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-    font.draw_string(fb, 2, kSoftkeyY + 4, "L/R:CHANGE ENTER:EDIT F5:GRPH ESC:BACK", kGrayLine);
+    ui::draw_hint_bar(fb, "L/R:CHANGE ENTER:EDIT F5:GRPH ESC:BACK");
 }
 
 PlotScreen& plot_screen() {

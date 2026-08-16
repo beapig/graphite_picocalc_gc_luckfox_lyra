@@ -34,16 +34,12 @@ bool FilesScreen::on_key(const platform::KeyEvent& ev) {
     }
     switch (ev.key) {
         case Key::kUp:
-            if (selected_ > 0) {
-                --selected_;
-                scroll_ = std::min(scroll_, selected_);
-            }
+            selected_ = (selected_ + count_ - 1) % count_;
+            scroll_ = std::clamp(scroll_, std::max(0, selected_ - visible_rows() + 1), selected_);
             return true;
         case Key::kDown:
-            if (selected_ < count_ - 1) {
-                ++selected_;
-                scroll_ = std::max(scroll_, selected_ - visible_rows() + 1);
-            }
+            selected_ = (selected_ + 1) % count_;
+            scroll_ = std::clamp(scroll_, std::max(0, selected_ - visible_rows() + 1), selected_);
             return true;
         case Key::kEscape:
             ui::screen_manager().pop();

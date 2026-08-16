@@ -3,6 +3,7 @@
 #include <cstring>
 
 #include "gfx/font.hpp"
+#include "ui/chrome.hpp"
 #include "ui/screen_manager.hpp"
 #include "math/engine.hpp"
 #include "apps/graph_screen.hpp"
@@ -101,18 +102,14 @@ bool SlotEditorScreen::on_key(const platform::KeyEvent& ev) {
 
     switch (ev.key) {
         case Key::kUp:
-            if (selected_ > 0) {
-                invalidate_row(selected_);
-                --selected_;
-                invalidate_row(selected_);
-            }
+            invalidate_row(selected_);
+            selected_ = (selected_ + field_count_ - 1) % field_count_;
+            invalidate_row(selected_);
             return true;
         case Key::kDown:
-            if (selected_ < field_count_ - 1) {
-                invalidate_row(selected_);
-                ++selected_;
-                invalidate_row(selected_);
-            }
+            invalidate_row(selected_);
+            selected_ = (selected_ + 1) % field_count_;
+            invalidate_row(selected_);
             return true;
         // 2026-07-18 remap: row ops move to non-F keys (ENTER edit,
         // SPACE toggle, DEL clear) so F2-F5 can follow the global
@@ -219,9 +216,7 @@ void SlotEditorScreen::render(gfx::Framebuffer& fb) {
     }
 
     // Softkey bar
-    const int sk = platform::kScreenH - 20;
-    fb.fill_rect(0, sk, platform::kScreenW, 20, platform::Color::from_rgb(30, 30, 30));
-    font.draw_string(fb, 2, sk + 4, softkey_text(), kGrayLine);
+    ui::draw_hint_bar(fb, softkey_text());
 }
 
 }  // namespace apps
