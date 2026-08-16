@@ -15,9 +15,10 @@ constexpr int kScreenWidth = 320;
 constexpr int kScreenHeight = 320;
 
 // ---- Memory layout ----
-#ifdef PICOCALC_PICO2
-// Pico 2 has 520 KB SRAM and a hardware FPU.
-// Comfortable headroom — full SRAM framebuffer is fine.
+#if defined(PICOCALC_PICO2) || defined(PICOCALC_HOST)
+// Pico 2 has 520 KB SRAM and a hardware FPU; the Linux/SDL port has a
+// whole process address space. Both take the comfortable path — full
+// framebuffer, synchronous push, no strip pipeline.
 constexpr bool kUseFullFramebuffer = true;
 // (CAS ExprPool overlays the shared math scratch kCompute region — see
 // src/math/cas/expr.cpp and math::scratch — so no dedicated pool constant.)

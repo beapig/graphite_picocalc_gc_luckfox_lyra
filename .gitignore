@@ -4,6 +4,8 @@ pico-examples/
 
 # Build artifacts
 build/
+host/deps/
+host/sysroot/
 *.uf2
 *.elf
 *.bin

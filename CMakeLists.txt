@@ -94,6 +94,7 @@ add_executable(picocalc_graphcalc
     src/platform/storage.cpp
     src/platform/system.cpp
     src/platform/power.cpp
+    src/platform/sound.cpp
     src/gfx/font.cpp
     src/gfx/framebuffer.cpp
     src/ui/screen_manager.cpp

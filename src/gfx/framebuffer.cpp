@@ -3,8 +3,13 @@
 #include <algorithm>
 #include <cstring>
 
+#if PICOCALC_HOST
+// Linux/SDL port: single-threaded, synchronous push. No core-1 service,
+// no strip pipeline — render the band and hand it to the display backend.
+#else
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
+#endif
 
 namespace gfx {
 
@@ -13,9 +18,10 @@ namespace {
 // Render buffers. Full mode (Pico 2): one whole frame, pushed
 // synchronously on core 0. Strip mode (Pico 1): two ping-pong strip
 // buffers so core 0 can render strip N+1 while core 1 DMAs strip N.
-#if PICOCALC_PICO2
+#if PICOCALC_PICO2 || PICOCALC_HOST
 uint16_t frame_buf[platform::kScreenW * platform::kScreenH];
 #endif
+#if !PICOCALC_HOST
 uint16_t strip_buf[2][platform::kScreenW * config::kStripHeight];
 
 // A strip handed to core 1 to push. Its buffer must not be reused until
@@ -28,12 +34,14 @@ PushJob jobs[2];
 
 // Jobs submitted to core 1 that have not yet been acked.
 int outstanding = 0;
+#endif
 
 // True once the core-1 service is running. Until then (or if it was
 // never started), render_frame pushes synchronously on core 0 rather
 // than submitting jobs to a service that can't drain them.
 bool service_running = false;
 
+#if !PICOCALC_HOST
 void submit(PushJob* job) {
     multicore_fifo_push_blocking(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(job)));
     ++outstanding;
@@ -49,9 +57,16 @@ void drain_acks() {
         wait_one_ack();
     }
 }
+#endif
 
 }  // namespace
 
+#if PICOCALC_HOST
+// Host port: the display backend is synchronous (SDL texture update),
+// so there is no core-1 service to launch. Kept as a no-op so the
+// firmware call site in main() carries over unchanged.
+void start_display_service() {}
+#else
 // Core-1 display service (D10, revived 2026-07-25). Pops a strip job,
 // DMAs it to the panel, acks. push_rect_dma and its whole call path are
 // RAM-resident (__not_in_flash_func) — executing it from flash (XIP)
@@ -79,6 +94,7 @@ void start_display_service() {
         service_running = true;
     }
 }
+#endif  // !PICOCALC_HOST
 
 void Framebuffer::render_frame(RenderFn render, void* ctx, int dirty_y0, int dirty_y1) {
     dirty_y0 = std::max(dirty_y0, 0);
@@ -88,7 +104,7 @@ void Framebuffer::render_frame(RenderFn render, void* ctx, int dirty_y0, int dir
     }
 
     if (config::kUseFullFramebuffer) {
-#if PICOCALC_PICO2
+#if PICOCALC_PICO2 || PICOCALC_HOST
         // One buffer-sized "strip": the band renders at the top of
         // frame_buf (row() offsets by clip_y0_), so the buffer is
         // scratch, not a persistent frame image.
@@ -100,6 +116,14 @@ void Framebuffer::render_frame(RenderFn render, void* ctx, int dirty_y0, int dir
         // is a single buffer, so drain the previous frame's push before
         // reusing it. Falls back to a synchronous push before the service
         // launches (boot splash, defensive).
+#if PICOCALC_HOST
+        buf_ = frame_buf;
+        clip_y0_ = dirty_y0;
+        clip_y1_ = dirty_y1;
+        render(*this, ctx);
+        platform::display().push_rect(0, dirty_y0, platform::kScreenW, dirty_y1 - dirty_y0,
+                                      frame_buf);
+#else
         if (service_running) {
             drain_acks();  // previous async push done → frame_buf free to reuse
         }
@@ -116,8 +140,10 @@ void Framebuffer::render_frame(RenderFn render, void* ctx, int dirty_y0, int dir
         }
 #endif
         return;
+#endif  // PICOCALC_PICO2 || PICOCALC_HOST
     }
 
+#if !PICOCALC_HOST
     // Strip mode. Synchronous fallback if the core-1 service isn't
     // running (defensive — no render should occur before boot launches
     // it, but never submit to a service that can't drain the FIFO).
@@ -154,6 +180,7 @@ void Framebuffer::render_frame(RenderFn render, void* ctx, int dirty_y0, int dir
         slot ^= 1;
     }
     drain_acks();
+#endif  // !PICOCALC_HOST
 }
 
 void Framebuffer::clear(Color c) {
